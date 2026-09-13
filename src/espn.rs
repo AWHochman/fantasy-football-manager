@@ -166,11 +166,13 @@ fn normalize(league_id: u64, league: EspnLeague) -> LeagueSnapshot {
         .into_iter()
         .map(|team| FantasyTeam {
             team_id: team.id.to_string(),
-            team_name: [team.location, team.nickname]
-                .into_iter()
-                .flatten()
-                .collect::<Vec<_>>()
-                .join(" "),
+            team_name: team.name.unwrap_or_else(|| {
+                [team.location, team.nickname]
+                    .into_iter()
+                    .flatten()
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            }),
             owner_id: team.owners.first().cloned(),
             owner_name: None,
             players: team
@@ -360,6 +362,7 @@ struct EspnSettings {
 #[derive(Deserialize)]
 struct EspnTeam {
     id: u64,
+    name: Option<String>,
     location: Option<String>,
     nickname: Option<String>,
     #[serde(default, deserialize_with = "null_to_default")]
@@ -426,6 +429,7 @@ mod tests {
                 "settings": {"name": "Settings league"},
                 "teams": [{
                     "id": 1,
+                    "name": "Custom name",
                     "location": "Team",
                     "nickname": "One",
                     "owners": ["owner-1"],
@@ -446,7 +450,7 @@ mod tests {
 
         let snapshot = normalize(42, league);
         assert_eq!(snapshot.league_name, "Settings league");
-        assert_eq!(snapshot.teams[0].team_name, "Team One");
+        assert_eq!(snapshot.teams[0].team_name, "Custom name");
         assert_eq!(snapshot.teams[0].players[0].provider_player_id, "-16030");
         assert_eq!(snapshot.teams[0].players[0].position.as_deref(), Some("WR"));
         assert_eq!(

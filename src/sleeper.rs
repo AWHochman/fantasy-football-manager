@@ -79,7 +79,11 @@ fn normalize(
     let owners: HashMap<_, _> = users
         .into_iter()
         .map(|user| {
-            let name = user.display_name.or(user.username);
+            let name = user
+                .metadata
+                .and_then(|metadata| metadata.team_name)
+                .or(user.display_name)
+                .or(user.username);
             (user.user_id, name)
         })
         .collect();
@@ -165,6 +169,12 @@ struct SleeperUser {
     user_id: String,
     display_name: Option<String>,
     username: Option<String>,
+    metadata: Option<SleeperUserMetadata>,
+}
+
+#[derive(Deserialize)]
+struct SleeperUserMetadata {
+    team_name: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -210,6 +220,9 @@ mod tests {
                 user_id: "owner-1".to_owned(),
                 display_name: Some("Austin".to_owned()),
                 username: None,
+                metadata: Some(SleeperUserMetadata {
+                    team_name: Some("Team Austin".to_owned()),
+                }),
             }],
             vec![SleeperRoster {
                 roster_id: 7,
@@ -241,7 +254,7 @@ mod tests {
         );
 
         assert_eq!(snapshot.league_name, "Sunday league");
-        assert_eq!(snapshot.teams[0].owner_name.as_deref(), Some("Austin"));
+        assert_eq!(snapshot.teams[0].owner_name.as_deref(), Some("Team Austin"));
         assert_eq!(
             snapshot.teams[0].players[0].lineup_status,
             LineupStatus::Starter
