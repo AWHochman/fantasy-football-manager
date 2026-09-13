@@ -72,4 +72,7 @@ MANAGED_TEAMS_JSON=[{"provider":"Sleeper","league_id":"123","team_id":"3"},{"pro
 ```
 
 For Sleeper, `team_id` is its `roster_id`. For ESPN, it is the team `id` from
-the league response.
+the league response. Multiple ESPN entries share the same `ESPN_SWID` and
+`ESPN_S2` session values.
+
+Run the current read-and-evaluate pipeline with `cargo run --bin monitor`.

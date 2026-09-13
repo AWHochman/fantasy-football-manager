@@ -9,6 +9,7 @@ mod error;
 mod espn;
 mod evaluator;
 mod model;
+mod runtime;
 mod sleeper;
 mod source;
 
@@ -21,5 +22,6 @@ pub use model::{
     FantasyTeam, LeagueSnapshot, LineupStatus, PlayerAvailability, PlayerEnrichment, Provider,
     RosteredPlayer,
 };
+pub use runtime::{fetch_managed_snapshots, ManagedSnapshot, RuntimeError};
 pub use sleeper::SleeperSource;
 pub use source::FantasySource;
