@@ -1,0 +1,411 @@
+use async_trait::async_trait;
+use reqwest::{header, Client};
+use serde::{Deserialize, Deserializer};
+
+use crate::{
+    FantasySource, FantasyTeam, LeagueSnapshot, LineupStatus, PlayerAvailability, Provider,
+    RosteredPlayer, SourceError,
+};
+
+// This is the read endpoint used by the `espn-api` Python library. ESPN does
+// not document it as a public integration API, so failures are surfaced with
+// a reconnect-friendly message below.
+const ESPN_FANTASY_BASE: &str = "https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl";
+
+/// Read-only client for one private ESPN fantasy football league.
+///
+/// `swid` and `espn_s2` are supplied by the caller and are never logged or
+/// written to disk by this crate.
+pub struct EspnSource {
+    http: Client,
+    league_id: u64,
+    season: u16,
+    swid: String,
+    espn_s2: String,
+}
+
+impl EspnSource {
+    pub fn new(
+        league_id: u64,
+        season: u16,
+        swid: impl Into<String>,
+        espn_s2: impl Into<String>,
+    ) -> Self {
+        Self {
+            http: Client::new(),
+            league_id,
+            season,
+            swid: swid.into(),
+            espn_s2: espn_s2.into(),
+        }
+    }
+
+    pub fn with_http_client(
+        league_id: u64,
+        season: u16,
+        swid: impl Into<String>,
+        espn_s2: impl Into<String>,
+        http: Client,
+    ) -> Self {
+        Self {
+            http,
+            league_id,
+            season,
+            swid: swid.into(),
+            espn_s2: espn_s2.into(),
+        }
+    }
+
+    fn cookie_header(&self) -> String {
+        format!("SWID={}; espn_s2={}", self.swid, self.espn_s2)
+    }
+}
+
+#[async_trait]
+impl FantasySource for EspnSource {
+    fn provider(&self) -> Provider {
+        Provider::Espn
+    }
+
+    async fn fetch_league(&self) -> Result<LeagueSnapshot, SourceError> {
+        let url = format!(
+            "{ESPN_FANTASY_BASE}/seasons/{}/segments/0/leagues/{}?view=mTeam&view=mRoster&view=mSettings",
+            self.season, self.league_id
+        );
+        let response = self
+            .http
+            .get(url)
+            .header(header::COOKIE, self.cookie_header())
+            .header(
+                header::USER_AGENT,
+                "fantasy-football-manager/0.1 (personal read-only client)",
+            )
+            .send()
+            .await?;
+        let status = response.status();
+        let content_type = response
+            .headers()
+            .get(header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or("unknown")
+            .to_owned();
+        let body = response.text().await?;
+
+        if !status.is_success() {
+            return Err(SourceError::InvalidResponse(format!(
+                "ESPN returned HTTP {status}. Verify ESPN_LEAGUE_ID, ESPN_SWID, and ESPN_S2."
+            )));
+        }
+
+        let document: serde_json::Value = serde_json::from_str(&body).map_err(|error| {
+            SourceError::InvalidResponse(format!(
+                "ESPN returned an unsupported response (HTTP {status}, content type {content_type}, {} bytes): {error}",
+                body.len(),
+            ))
+        })?;
+        let league_document = match document {
+            serde_json::Value::Object(_) => document,
+            serde_json::Value::Array(mut leagues) => leagues.pop().ok_or_else(|| {
+                SourceError::InvalidResponse("ESPN returned an empty league response.".to_owned())
+            })?,
+            _ => {
+                return Err(SourceError::InvalidResponse(
+                    "ESPN returned JSON that was not a league object or array.".to_owned(),
+                ));
+            }
+        };
+        let response: EspnLeague = serde_json::from_value(league_document).map_err(|error| {
+            SourceError::InvalidResponse(format!(
+                "ESPN returned a league response with an unsupported field: {error}"
+            ))
+        })?;
+
+        Ok(normalize(self.league_id, response))
+    }
+}
+
+fn normalize(league_id: u64, league: EspnLeague) -> LeagueSnapshot {
+    let league_name = league
+        .settings
+        .name
+        .or(league.name)
+        .unwrap_or_else(|| format!("ESPN league {league_id}"));
+    let teams = league
+        .teams
+        .into_iter()
+        .map(|team| FantasyTeam {
+            team_id: team.id.to_string(),
+            team_name: [team.location, team.nickname]
+                .into_iter()
+                .flatten()
+                .collect::<Vec<_>>()
+                .join(" "),
+            owner_id: team.owners.first().cloned(),
+            owner_name: None,
+            players: team
+                .roster
+                .entries
+                .into_iter()
+                .map(|entry| {
+                    let status = lineup_status(entry.lineup_slot_id);
+                    RosteredPlayer {
+                        provider_player_id: entry.player_id.to_string(),
+                        full_name: entry
+                            .player_pool_entry
+                            .player
+                            .full_name
+                            .unwrap_or_else(|| "Unknown player".to_owned()),
+                        position: position_name(entry.player_pool_entry.player.default_position_id)
+                            .map(str::to_owned),
+                        nfl_team: pro_team_name(entry.player_pool_entry.player.pro_team_id)
+                            .map(str::to_owned),
+                        lineup_slot: lineup_slot_name(entry.lineup_slot_id).to_owned(),
+                        lineup_status: status,
+                        availability: PlayerAvailability {
+                            is_on_bye: false,
+                            is_confirmed_inactive: false,
+                            injury_status: entry.player_pool_entry.player.injury_status,
+                            projected_points: None,
+                        },
+                    }
+                })
+                .collect(),
+        })
+        .collect();
+
+    LeagueSnapshot {
+        provider: Provider::Espn,
+        league_id: league_id.to_string(),
+        league_name,
+        teams,
+    }
+}
+
+fn lineup_status(slot_id: u8) -> LineupStatus {
+    match slot_id {
+        20 => LineupStatus::Bench,
+        21 => LineupStatus::Reserve,
+        _ => LineupStatus::Starter,
+    }
+}
+
+fn lineup_slot_name(slot_id: u8) -> &'static str {
+    match slot_id {
+        0 => "QB",
+        2 => "RB",
+        4 => "WR",
+        6 => "TE",
+        16 => "D/ST",
+        17 => "K",
+        20 => "BENCH",
+        21 => "IR",
+        23 => "FLEX",
+        _ => "CUSTOM",
+    }
+}
+
+fn position_name(position_id: Option<u8>) -> Option<&'static str> {
+    match position_id? {
+        0 => Some("QB"),
+        1 => Some("TQB"),
+        2 => Some("RB"),
+        3 => Some("RB/WR"),
+        4 => Some("WR"),
+        5 => Some("WR/TE"),
+        6 => Some("TE"),
+        7 => Some("OP"),
+        8 => Some("DT"),
+        9 => Some("DE"),
+        10 => Some("LB"),
+        11 => Some("DL"),
+        12 => Some("CB"),
+        13 => Some("S"),
+        14 => Some("DB"),
+        15 => Some("DP"),
+        16 => Some("D/ST"),
+        17 => Some("K"),
+        18 => Some("P"),
+        19 => Some("HC"),
+        _ => None,
+    }
+}
+
+fn pro_team_name(pro_team_id: Option<u8>) -> Option<&'static str> {
+    match pro_team_id? {
+        1 => Some("ATL"),
+        2 => Some("BUF"),
+        3 => Some("CHI"),
+        4 => Some("CIN"),
+        5 => Some("CLE"),
+        6 => Some("DAL"),
+        7 => Some("DEN"),
+        8 => Some("DET"),
+        9 => Some("GB"),
+        10 => Some("TEN"),
+        11 => Some("IND"),
+        12 => Some("KC"),
+        13 => Some("LV"),
+        14 => Some("LAR"),
+        15 => Some("MIA"),
+        16 => Some("MIN"),
+        17 => Some("NE"),
+        18 => Some("NO"),
+        19 => Some("NYG"),
+        20 => Some("NYJ"),
+        21 => Some("PHI"),
+        22 => Some("ARI"),
+        23 => Some("PIT"),
+        24 => Some("LAC"),
+        25 => Some("SF"),
+        26 => Some("SEA"),
+        27 => Some("TB"),
+        28 => Some("WSH"),
+        29 => Some("CAR"),
+        30 => Some("JAX"),
+        33 => Some("BAL"),
+        34 => Some("HOU"),
+        _ => None,
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct EspnLeague {
+    name: Option<String>,
+    #[serde(default, deserialize_with = "null_to_default")]
+    settings: EspnSettings,
+    #[serde(default, deserialize_with = "null_to_default")]
+    teams: Vec<EspnTeam>,
+}
+
+#[derive(Default, Deserialize)]
+struct EspnSettings {
+    name: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct EspnTeam {
+    id: u64,
+    location: Option<String>,
+    nickname: Option<String>,
+    #[serde(default, deserialize_with = "null_to_default")]
+    owners: Vec<String>,
+    #[serde(default, deserialize_with = "null_to_default")]
+    roster: EspnRoster,
+}
+
+#[derive(Default, Deserialize)]
+struct EspnRoster {
+    #[serde(default, deserialize_with = "null_to_default")]
+    entries: Vec<EspnRosterEntry>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct EspnRosterEntry {
+    // ESPN represents D/ST entries with negative player IDs.
+    player_id: i64,
+    lineup_slot_id: u8,
+    player_pool_entry: EspnPlayerPoolEntry,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct EspnPlayerPoolEntry {
+    player: EspnPlayer,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct EspnPlayer {
+    full_name: Option<String>,
+    default_position_id: Option<u8>,
+    pro_team_id: Option<u8>,
+    injury_status: Option<String>,
+}
+
+fn null_to_default<'de, D, T>(deserializer: D) -> Result<T, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Default + Deserialize<'de>,
+{
+    Option::<T>::deserialize(deserializer).map(Option::unwrap_or_default)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn maps_espn_bench_and_ir_slots() {
+        assert_eq!(lineup_status(0), LineupStatus::Starter);
+        assert_eq!(lineup_status(20), LineupStatus::Bench);
+        assert_eq!(lineup_status(21), LineupStatus::Reserve);
+        assert_eq!(lineup_slot_name(23), "FLEX");
+    }
+
+    #[test]
+    fn deserializes_a_minimal_league_response() {
+        let league: EspnLeague = serde_json::from_str(
+            r#"{
+                "name": "Monday league",
+                "settings": {"name": "Settings league"},
+                "teams": [{
+                    "id": 1,
+                    "location": "Team",
+                    "nickname": "One",
+                    "owners": ["owner-1"],
+                    "roster": {"entries": [{
+                        "playerId": -16030,
+                        "lineupSlotId": 20,
+                        "playerPoolEntry": {"player": {
+                            "fullName": "Bench Player",
+                            "defaultPositionId": 4,
+                            "proTeamId": 2,
+                            "injuryStatus": "ACTIVE"
+                        }}
+                    }]}
+                }]
+            }"#,
+        )
+        .expect("fixture should match the ESPN response shape");
+
+        let snapshot = normalize(42, league);
+        assert_eq!(snapshot.league_name, "Settings league");
+        assert_eq!(snapshot.teams[0].team_name, "Team One");
+        assert_eq!(snapshot.teams[0].players[0].provider_player_id, "-16030");
+        assert_eq!(snapshot.teams[0].players[0].position.as_deref(), Some("WR"));
+        assert_eq!(
+            snapshot.teams[0].players[0].nfl_team.as_deref(),
+            Some("BUF")
+        );
+        assert_eq!(
+            snapshot.teams[0].players[0].lineup_status,
+            LineupStatus::Bench
+        );
+    }
+
+    #[test]
+    fn accepts_null_optional_collections() {
+        let league: EspnLeague = serde_json::from_str(r#"{"name": "Empty", "teams": null}"#)
+            .expect("ESPN may return null instead of an empty team collection");
+
+        assert!(league.teams.is_empty());
+    }
+
+    #[test]
+    fn accepts_the_array_response_variant() {
+        let response: Vec<EspnLeague> =
+            serde_json::from_str(r#"[{"name": "League", "teams": []}]"#)
+                .expect("ESPN may wrap a league response in an array");
+
+        assert_eq!(response.len(), 1);
+    }
+
+    #[test]
+    fn maps_known_espn_player_and_team_ids() {
+        assert_eq!(position_name(Some(16)), Some("D/ST"));
+        assert_eq!(pro_team_name(Some(34)), Some("HOU"));
+        assert_eq!(position_name(Some(99)), None);
+    }
+}
