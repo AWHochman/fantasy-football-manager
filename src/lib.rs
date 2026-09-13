@@ -4,6 +4,7 @@
 //! waivers, trades, or any other provider mutation.
 
 mod algorithm;
+mod config;
 mod error;
 mod espn;
 mod evaluator;
@@ -12,6 +13,7 @@ mod sleeper;
 mod source;
 
 pub use algorithm::merge_player_enrichment;
+pub use config::{AppConfig, ConfigError, ManagedTeam};
 pub use error::SourceError;
 pub use espn::EspnSource;
 pub use evaluator::{evaluate_team, AlertReason, EvaluationError, LineupAlert};

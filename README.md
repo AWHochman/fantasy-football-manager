@@ -62,8 +62,14 @@ cargo run --bin fetch_leagues
 It requests only the configured sources and prints normalized roster JSON. An
 ESPN authorization failure usually means `ESPN_S2` needs to be refreshed.
 
-## Next steps
+## Managed Teams
 
-1. Add an app configuration loader for the league IDs, credentials, and managed team IDs.
-2. Enrich snapshots with schedule, bye-week, and projection data.
-3. Deliver deduplicated email alerts for the core evaluator's actionable results.
+Configure every team you want monitored through `MANAGED_TEAMS_JSON` in your
+local `.env` file. For example:
+
+```dotenv
+MANAGED_TEAMS_JSON=[{"provider":"Sleeper","league_id":"123","team_id":"3"},{"provider":"Espn","league_id":"456","team_id":"8"}]
+```
+
+For Sleeper, `team_id` is its `roster_id`. For ESPN, it is the team `id` from
+the league response.
