@@ -34,6 +34,17 @@ pub struct RosteredPlayer {
     pub availability: PlayerAvailability,
 }
 
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct PlayerEnrichment {
+    pub provider_player_id: String,
+    pub full_name: String,
+    pub position: Option<String>,
+    pub nfl_team: Option<String>,
+    pub injury_status: Option<String>,
+    pub is_on_bye: Option<bool>,
+    pub projected_points: Option<f64>,
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum LineupStatus {
     Starter,

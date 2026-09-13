@@ -14,7 +14,8 @@ pub use error::SourceError;
 pub use espn::EspnSource;
 pub use evaluator::{evaluate_team, AlertReason, EvaluationError, LineupAlert};
 pub use model::{
-    FantasyTeam, LeagueSnapshot, LineupStatus, PlayerAvailability, Provider, RosteredPlayer,
+    FantasyTeam, LeagueSnapshot, LineupStatus, PlayerAvailability, PlayerEnrichment, Provider,
+    RosteredPlayer,
 };
 pub use sleeper::SleeperSource;
 pub use source::FantasySource;

@@ -3,8 +3,8 @@ use reqwest::{header, Client};
 use serde::{Deserialize, Deserializer};
 
 use crate::{
-    FantasySource, FantasyTeam, LeagueSnapshot, LineupStatus, PlayerAvailability, Provider,
-    RosteredPlayer, SourceError,
+    FantasySource, FantasyTeam, LeagueSnapshot, LineupStatus, PlayerAvailability, PlayerEnrichment,
+    Provider, RosteredPlayer, SourceError,
 };
 
 // This is the read endpoint used by the `espn-api` Python library. ESPN does
@@ -54,6 +54,37 @@ impl EspnSource {
             swid: swid.into(),
             espn_s2: espn_s2.into(),
         }
+    }
+
+    pub async fn fetch_player_enrichment(
+        &self,
+        player_ids: &[i64],
+        scoring_period: u8,
+    ) -> Result<Vec<PlayerEnrichment>, SourceError> {
+        if player_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let url = format!("{ESPN_FANTASY_BASE}/seasons/{}/segments/0/leagues/{}?view=kona_playercard&scoringPeriodId={scoring_period}", self.season, self.league_id);
+        let filter = serde_json::json!({"players": {"filterIds": {"value": player_ids}}});
+        let payload: serde_json::Value = self
+            .http
+            .get(url)
+            .header(header::COOKIE, self.cookie_header())
+            .header("x-fantasy-filter", filter.to_string())
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?;
+        Ok(payload["players"]
+            .as_array()
+            .ok_or_else(|| {
+                SourceError::InvalidResponse("ESPN player response had no players list.".to_owned())
+            })?
+            .iter()
+            .filter_map(|card| card.get("player").or(Some(card)))
+            .filter_map(|player| normalize_player_enrichment(player, self.season, scoring_period))
+            .collect())
     }
 
     fn cookie_header(&self) -> String {
@@ -266,6 +297,49 @@ fn pro_team_name(pro_team_id: Option<u8>) -> Option<&'static str> {
         34 => Some("HOU"),
         _ => None,
     }
+}
+
+fn normalize_player_enrichment(
+    player: &serde_json::Value,
+    season: u16,
+    scoring_period: u8,
+) -> Option<PlayerEnrichment> {
+    let projected_points = player
+        .get("stats")
+        .and_then(serde_json::Value::as_array)
+        .and_then(|stats| {
+            stats.iter().find_map(|stat| {
+                (stat.get("seasonId")?.as_u64()? == u64::from(season)
+                    && stat.get("scoringPeriodId")?.as_u64()? == u64::from(scoring_period)
+                    && stat.get("statSourceId")?.as_u64()? == 1)
+                    .then(|| stat.get("appliedTotal")?.as_f64())
+                    .flatten()
+            })
+        });
+    Some(PlayerEnrichment {
+        provider_player_id: player.get("id")?.as_i64()?.to_string(),
+        full_name: player.get("fullName")?.as_str()?.to_owned(),
+        position: position_name(
+            player
+                .get("defaultPositionId")
+                .and_then(serde_json::Value::as_u64)
+                .map(|id| id as u8),
+        )
+        .map(str::to_owned),
+        nfl_team: pro_team_name(
+            player
+                .get("proTeamId")
+                .and_then(serde_json::Value::as_u64)
+                .map(|id| id as u8),
+        )
+        .map(str::to_owned),
+        injury_status: player
+            .get("injuryStatus")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned),
+        is_on_bye: None,
+        projected_points,
+    })
 }
 
 #[derive(Deserialize)]
