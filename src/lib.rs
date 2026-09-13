@@ -5,12 +5,14 @@
 
 mod error;
 mod espn;
+mod evaluator;
 mod model;
 mod sleeper;
 mod source;
 
 pub use error::SourceError;
 pub use espn::EspnSource;
+pub use evaluator::{evaluate_team, AlertReason, EvaluationError, LineupAlert};
 pub use model::{
     FantasyTeam, LeagueSnapshot, LineupStatus, PlayerAvailability, Provider, RosteredPlayer,
 };
