@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::{LeagueSnapshot, PlayerEnrichment, Provider};
+use crate::{AvailablePlayer, LeagueSnapshot, PlayerEnrichment, Provider};
 
 /// Combines provider roster data with ESPN's weekly player enrichment.
 ///
@@ -39,6 +39,39 @@ pub fn merge_player_enrichment(
     }
 
     enriched
+}
+
+/// Applies the shared weekly player enrichment to a provider's available
+/// player candidates. Candidates expose their ESPN ID directly, whether they
+/// originated from ESPN or Sleeper.
+pub fn merge_available_player_enrichment(
+    players: &[AvailablePlayer],
+    enrichment_by_espn_id: &HashMap<String, PlayerEnrichment>,
+) -> Vec<AvailablePlayer> {
+    players
+        .iter()
+        .cloned()
+        .map(|mut player| {
+            let Some(enrichment) = player
+                .espn_player_id
+                .as_ref()
+                .and_then(|id| enrichment_by_espn_id.get(id))
+            else {
+                return player;
+            };
+            player.availability.is_on_bye = enrichment
+                .is_on_bye
+                .unwrap_or(player.availability.is_on_bye);
+            player.availability.injury_status = enrichment
+                .injury_status
+                .clone()
+                .or(player.availability.injury_status);
+            player.availability.projected_points = enrichment
+                .projected_points
+                .or(player.availability.projected_points);
+            player
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -89,6 +122,39 @@ mod tests {
 
         let result = merge_player_enrichment(&snapshot, &enrichments, &player_ids);
         let availability = &result.teams[0].players[0].availability;
+
+        assert!(availability.is_on_bye);
+        assert_eq!(availability.injury_status.as_deref(), Some("Out"));
+        assert_eq!(availability.projected_points, Some(0.0));
+    }
+
+    #[test]
+    fn enriches_an_available_player_through_its_espn_id() {
+        let player = AvailablePlayer {
+            provider_player_id: "sleeper-1".to_owned(),
+            espn_player_id: Some("espn-1".to_owned()),
+            eligible_positions: vec!["WR".to_owned()],
+            is_locked: false,
+            full_name: "Player One".to_owned(),
+            position: Some("WR".to_owned()),
+            nfl_team: Some("BUF".to_owned()),
+            availability: PlayerAvailability::default(),
+        };
+        let enrichments = HashMap::from([(
+            "espn-1".to_owned(),
+            PlayerEnrichment {
+                provider_player_id: "espn-1".to_owned(),
+                full_name: "Player One".to_owned(),
+                position: Some("WR".to_owned()),
+                nfl_team: Some("BUF".to_owned()),
+                injury_status: Some("Out".to_owned()),
+                is_on_bye: Some(true),
+                projected_points: Some(0.0),
+            },
+        )]);
+
+        let result = merge_available_player_enrichment(&[player], &enrichments);
+        let availability = &result[0].availability;
 
         assert!(availability.is_on_bye);
         assert_eq!(availability.injury_status.as_deref(), Some("Out"));

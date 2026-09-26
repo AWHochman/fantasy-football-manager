@@ -1,8 +1,9 @@
 use std::error::Error;
 
 use fantasy_football_manager::{
-    evaluate_team, fetch_managed_snapshots, recommend_optimal_lineup, AlertNotifier, AlertState,
-    AppConfig, EmailNotifier, MonitorAlert, MonitorHealthState, DEFAULT_MINIMUM_PROJECTED_GAIN,
+    evaluate_team, fetch_managed_snapshots, recommend_free_agent_lineup, recommend_optimal_lineup,
+    AlertNotifier, AlertState, AppConfig, EmailNotifier, MonitorAlert, MonitorHealthState,
+    DEFAULT_MINIMUM_PROJECTED_GAIN,
 };
 
 #[tokio::main(flavor = "current_thread")]
@@ -53,6 +54,20 @@ async fn main() -> Result<(), Box<dyn Error>> {
         } else {
             println!(
                 "Skipped projected-lineup recommendations because NFL game locks were unavailable."
+            );
+        }
+        if managed.locks_known && managed.free_agents_known {
+            if let Some(recommendation) = recommend_free_agent_lineup(
+                &managed.snapshot,
+                &managed.team.team_id,
+                &managed.available_players,
+                DEFAULT_MINIMUM_PROJECTED_GAIN,
+            )? {
+                alerts.push(MonitorAlert::RecommendedFreeAgentLineup(recommendation));
+            }
+        } else if !managed.free_agents_known {
+            println!(
+                "Skipped free-agent lineup recommendations because available players were unavailable."
             );
         }
     }

@@ -3,17 +3,24 @@ use std::{collections::HashMap, collections::HashSet, env};
 use thiserror::Error;
 
 use crate::{
-    merge_player_enrichment, AppConfig, ConfigError, EspnSource, FantasySource, LeagueSnapshot,
-    ManagedTeam, NflGameStatusSource, PlayerEnrichment, Provider, SleeperSource, SourceError,
+    merge_available_player_enrichment, merge_player_enrichment, AppConfig, AvailablePlayer,
+    ConfigError, EspnSource, FantasySource, LeagueSnapshot, ManagedTeam, NflGameStatusSource,
+    PlayerEnrichment, Provider, SleeperSource, SourceError,
 };
+
+const FREE_AGENTS_PER_POSITION: usize = 8;
 
 #[derive(Clone, Debug)]
 pub struct ManagedSnapshot {
     pub team: ManagedTeam,
     pub snapshot: LeagueSnapshot,
+    pub available_players: Vec<AvailablePlayer>,
     /// False means game state could not be retrieved, so optimizer alerts must
     /// be skipped rather than treating every player as movable.
     pub locks_known: bool,
+    /// False means the available-player pool or its projection enrichment was
+    /// unavailable, so add/drop recommendations must be skipped.
+    pub free_agents_known: bool,
 }
 
 #[derive(Debug, Error)]
@@ -45,24 +52,48 @@ pub async fn fetch_managed_snapshots(
     let mut snapshots = Vec::with_capacity(config.teams.len());
 
     for team in &config.teams {
-        let snapshot = match team.provider {
-            Provider::Sleeper => SleeperSource::new(&team.league_id).fetch_league().await?,
+        let (snapshot, available_players, free_agents_known) = match team.provider {
+            Provider::Sleeper => {
+                let source = SleeperSource::new(&team.league_id);
+                let snapshot = source.fetch_league().await?;
+                let available_players = match source.fetch_available_players().await {
+                    Ok(players) => (players, true),
+                    Err(_) => (Vec::new(), false),
+                };
+                (snapshot, available_players.0, available_players.1)
+            }
             Provider::Espn => {
                 let session = espn.as_ref().expect("ESPN configuration was validated");
-                EspnSource::new(
+                let source = EspnSource::new(
                     team.league_id.parse::<u64>()?,
                     session.season,
                     &session.swid,
                     &session.espn_s2,
-                )
-                .fetch_league()
-                .await?
+                );
+                let snapshot = source.fetch_league().await?;
+                let available_players = match snapshot.scoring_period {
+                    Some(scoring_period) => {
+                        match source.fetch_available_players(scoring_period).await {
+                            Ok(players) => (players, true),
+                            Err(SourceError::EspnAuthenticationRequired) => {
+                                return Err(RuntimeError::Source(
+                                    SourceError::EspnAuthenticationRequired,
+                                ));
+                            }
+                            Err(_) => (Vec::new(), false),
+                        }
+                    }
+                    None => (Vec::new(), false),
+                };
+                (snapshot, available_players.0, available_players.1)
             }
         };
         snapshots.push(ManagedSnapshot {
             team: team.clone(),
             snapshot,
+            available_players,
             locks_known: false,
+            free_agents_known,
         });
     }
 
@@ -106,6 +137,15 @@ async fn enrich_snapshots(
                 }
             }
         }
+        for player in &managed.available_players {
+            if let Some(espn_id) = &player.espn_player_id {
+                if let Ok(id) = espn_id.parse::<i64>() {
+                    if id > 0 {
+                        ids.insert(id);
+                    }
+                }
+            }
+        }
     }
     if ids.is_empty() {
         return Ok(snapshots);
@@ -132,8 +172,13 @@ async fn enrich_snapshots(
                 &enrichment_by_espn_id,
                 &sleeper_to_espn,
             ),
+            available_players: limit_available_players(merge_available_player_enrichment(
+                &managed.available_players,
+                &enrichment_by_espn_id,
+            )),
             team: managed.team,
             locks_known: managed.locks_known,
+            free_agents_known: managed.free_agents_known,
         })
         .collect())
 }
@@ -154,8 +199,41 @@ async fn apply_game_locks(snapshots: Vec<ManagedSnapshot>) -> Vec<ManagedSnapsho
                         .is_some_and(|team| locked_teams.contains(team));
                 }
             }
+            for player in &mut managed.available_players {
+                player.is_locked = player
+                    .nfl_team
+                    .as_deref()
+                    .is_some_and(|team| locked_teams.contains(team));
+            }
             managed.locks_known = true;
             managed
+        })
+        .collect()
+}
+
+fn limit_available_players(players: Vec<AvailablePlayer>) -> Vec<AvailablePlayer> {
+    let mut by_position: HashMap<String, Vec<AvailablePlayer>> = HashMap::new();
+    for player in players
+        .into_iter()
+        .filter(|player| player.availability.projected_points.is_some())
+    {
+        let position = player
+            .position
+            .clone()
+            .unwrap_or_else(|| "OTHER".to_owned());
+        by_position.entry(position).or_default().push(player);
+    }
+    by_position
+        .into_values()
+        .flat_map(|mut players| {
+            players.sort_by(|left, right| {
+                right
+                    .availability
+                    .projected_points
+                    .unwrap_or_default()
+                    .total_cmp(&left.availability.projected_points.unwrap_or_default())
+            });
+            players.into_iter().take(FREE_AGENTS_PER_POSITION)
         })
         .collect()
 }

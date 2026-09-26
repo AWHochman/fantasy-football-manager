@@ -115,6 +115,15 @@ ESPN and Sleeper snapshots. If that game-status request is unavailable, the
 monitor still runs the starter-health checks but deliberately skips lineup
 recommendations for that run.
 
+The monitor also checks whether a single available-player add and unlocked
+drop would improve the valid lineup by at least 1.0 projected point. ESPN
+candidate pools include free agents and waiver players; Sleeper candidates are
+active players not rostered by any team in that league. To keep the exhaustive
+lineup search quick, each source supplies a position-balanced pool and the
+shared runtime retains up to eight projected candidates per primary position.
+These notifications are suggestions only: the monitor cannot add, drop, claim,
+or otherwise change a roster.
+
 The monitor keeps local state so an unchanged issue sends one email, not an
 email every 30 minutes. A changed issue sends an updated email; a resolved
 issue is removed from state and can alert again if it returns.

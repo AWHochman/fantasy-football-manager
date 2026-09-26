@@ -19,7 +19,7 @@ mod source;
 mod state;
 
 pub use alert::MonitorAlert;
-pub use algorithm::merge_player_enrichment;
+pub use algorithm::{merge_available_player_enrichment, merge_player_enrichment};
 pub use config::{AppConfig, ConfigError, ManagedTeam};
 pub use error::SourceError;
 pub use espn::EspnSource;

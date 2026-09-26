@@ -137,6 +137,26 @@ pub fn format_alert_email(alerts: &[MonitorAlert]) -> String {
                     ));
                 }
             }
+            MonitorAlert::RecommendedFreeAgentLineup(recommendation) => {
+                let lineup = &recommendation.lineup;
+                body.push_str(&format!(
+                    "\n- {} / {}: add {} ({:.1}) and drop {} for a valid unlocked lineup projecting {:.1} points higher ({:.1} to {:.1}).\n",
+                    lineup.league_name,
+                    lineup.team_name,
+                    recommendation.add_player_name,
+                    recommendation.add_projected_points,
+                    recommendation.drop_player_name,
+                    lineup.projected_gain,
+                    lineup.current_projected_points,
+                    lineup.optimized_projected_points,
+                ));
+                for assignment in &lineup.assignments {
+                    body.push_str(&format!(
+                        "  {}: {} ({:.1})\n",
+                        assignment.slot_name, assignment.player_name, assignment.projected_points
+                    ));
+                }
+            }
         }
     }
     body
@@ -218,7 +238,10 @@ fn alert_reason_name(reason: &AlertReason) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use crate::{LineupAlert, MonitorAlert, Provider};
+    use crate::{
+        FreeAgentRecommendation, LineupAlert, LineupAssignment, LineupRecommendation, MonitorAlert,
+        Provider,
+    };
 
     use super::*;
 
@@ -241,5 +264,37 @@ mod tests {
 
         assert!(body.contains("Sunday League / My Team"));
         assert!(body.contains("Player One (WR) [unavailable, zero projection]"));
+    }
+
+    #[test]
+    fn formats_free_agent_recommendations() {
+        let body = format_alert_email(&[MonitorAlert::RecommendedFreeAgentLineup(
+            FreeAgentRecommendation {
+                lineup: LineupRecommendation {
+                    provider: Provider::Sleeper,
+                    league_id: "1".to_owned(),
+                    league_name: "Sunday League".to_owned(),
+                    team_id: "2".to_owned(),
+                    team_name: "My Team".to_owned(),
+                    current_projected_points: 90.0,
+                    optimized_projected_points: 96.0,
+                    projected_gain: 6.0,
+                    assignments: vec![LineupAssignment {
+                        slot_name: "WR".to_owned(),
+                        player_id: "3".to_owned(),
+                        player_name: "New Player".to_owned(),
+                        projected_points: 14.0,
+                    }],
+                },
+                add_player_id: "3".to_owned(),
+                add_player_name: "New Player".to_owned(),
+                add_projected_points: 14.0,
+                drop_player_id: "4".to_owned(),
+                drop_player_name: "Old Player".to_owned(),
+            },
+        )]);
+
+        assert!(body.contains("add New Player (14.0) and drop Old Player"));
+        assert!(body.contains("WR: New Player (14.0)"));
     }
 }

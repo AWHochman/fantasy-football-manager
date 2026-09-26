@@ -147,6 +147,25 @@ impl From<&MonitorAlert> for AlertFingerprint {
                     .map(|assignment| (assignment.slot_name.clone(), assignment.player_id.clone()))
                     .collect(),
             },
+            MonitorAlert::RecommendedFreeAgentLineup(recommendation) => {
+                let lineup = &recommendation.lineup;
+                Self::RecommendedFreeAgentLineup {
+                    provider: lineup.provider,
+                    league_id: lineup.league_id.clone(),
+                    team_id: lineup.team_id.clone(),
+                    current_projected_points: lineup.current_projected_points.to_bits(),
+                    optimized_projected_points: lineup.optimized_projected_points.to_bits(),
+                    add_player_id: recommendation.add_player_id.clone(),
+                    drop_player_id: recommendation.drop_player_id.clone(),
+                    assignments: lineup
+                        .assignments
+                        .iter()
+                        .map(|assignment| {
+                            (assignment.slot_name.clone(), assignment.player_id.clone())
+                        })
+                        .collect(),
+                }
+            }
         }
     }
 }
@@ -167,6 +186,16 @@ enum AlertFingerprint {
         team_id: String,
         current_projected_points: u64,
         optimized_projected_points: u64,
+        assignments: Vec<(String, String)>,
+    },
+    RecommendedFreeAgentLineup {
+        provider: Provider,
+        league_id: String,
+        team_id: String,
+        current_projected_points: u64,
+        optimized_projected_points: u64,
+        add_player_id: String,
+        drop_player_id: String,
         assignments: Vec<(String, String)>,
     },
 }
