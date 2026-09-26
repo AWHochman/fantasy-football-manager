@@ -10,12 +10,14 @@ use reqwest::Client;
 use serde::{Deserialize, Deserializer};
 
 use crate::{
-    FantasySource, FantasyTeam, LeagueSnapshot, LineupSlot, LineupStatus, PlayerAvailability,
-    Provider, RosteredPlayer, SourceError,
+    AvailablePlayer, FantasySource, FantasyTeam, LeagueSnapshot, LineupSlot, LineupStatus,
+    PlayerAvailability, Provider, RosteredPlayer, SourceError,
 };
 
 const SLEEPER_API_BASE: &str = "https://api.sleeper.app/v1";
 const PLAYER_CACHE_TTL: Duration = Duration::from_secs(60 * 60 * 24);
+const FREE_AGENT_POSITIONS: [&str; 6] = ["QB", "RB", "WR", "TE", "K", "DEF"];
+const FREE_AGENTS_PER_POSITION: usize = 12;
 
 /// Read-only client for one Sleeper NFL league.
 pub struct SleeperSource {
@@ -56,6 +58,53 @@ impl SleeperSource {
         let players = get_json::<HashMap<String, SleeperPlayer>>(&self.http, &players_url).await?;
         write_cached_players(&self.players_cache_path, &players);
         Ok(players)
+    }
+
+    /// Returns active, unrostered players from this Sleeper league. Weekly
+    /// projections are deliberately enriched later through the shared path.
+    pub async fn fetch_available_players(&self) -> Result<Vec<AvailablePlayer>, SourceError> {
+        let rosters_url = format!("{SLEEPER_API_BASE}/league/{}/rosters", self.league_id);
+        let rosters = get_json::<Vec<SleeperRoster>>(&self.http, &rosters_url).await?;
+        let rostered_ids: std::collections::HashSet<_> = rosters
+            .into_iter()
+            .flat_map(|roster| roster.players)
+            .collect();
+
+        let mut players = HashMap::new();
+        for position in FREE_AGENT_POSITIONS {
+            let url = format!("{SLEEPER_API_BASE}/players/nfl?position={position}&active=true");
+            let mut position_players =
+                get_json::<HashMap<String, SleeperPlayer>>(&self.http, &url).await?;
+            let mut position_players: Vec<_> = position_players
+                .drain()
+                .filter(|(id, _)| !rostered_ids.contains(id))
+                .filter(|(_, player)| player.espn_id.is_some())
+                .collect();
+            position_players.sort_by_key(|(_, player)| player.search_rank.unwrap_or(i64::MAX));
+            for (id, player) in position_players.into_iter().take(FREE_AGENTS_PER_POSITION) {
+                let eligible_positions = player.eligible_positions();
+                players
+                    .entry(id.clone())
+                    .or_insert_with(|| AvailablePlayer {
+                        provider_player_id: id,
+                        espn_player_id: player.espn_id,
+                        eligible_positions,
+                        is_locked: false,
+                        full_name: player
+                            .full_name
+                            .unwrap_or_else(|| "Unknown player".to_owned()),
+                        position: player.position,
+                        nfl_team: player.team,
+                        availability: PlayerAvailability {
+                            is_on_bye: false,
+                            is_confirmed_inactive: false,
+                            injury_status: player.injury_status,
+                            projected_points: None,
+                        },
+                    });
+            }
+        }
+        Ok(players.into_values().collect())
     }
 }
 
@@ -327,6 +376,7 @@ struct SleeperPlayer {
     fantasy_positions: Vec<String>,
     team: Option<String>,
     injury_status: Option<String>,
+    search_rank: Option<i64>,
 }
 
 impl SleeperPlayer {
@@ -410,6 +460,7 @@ mod tests {
                         fantasy_positions: vec!["WR".to_owned()],
                         team: Some("NYJ".to_owned()),
                         injury_status: None,
+                        search_rank: Some(1),
                     },
                 ),
                 (
@@ -421,6 +472,7 @@ mod tests {
                         fantasy_positions: vec!["RB".to_owned()],
                         team: Some("NE".to_owned()),
                         injury_status: Some("Questionable".to_owned()),
+                        search_rank: Some(2),
                     },
                 ),
             ]),

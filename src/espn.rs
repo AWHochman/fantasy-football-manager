@@ -5,9 +5,12 @@ use reqwest::{header, Client, StatusCode};
 use serde::{Deserialize, Deserializer};
 
 use crate::{
-    FantasySource, FantasyTeam, LeagueSnapshot, LineupSlot, LineupStatus, PlayerAvailability,
-    PlayerEnrichment, Provider, RosteredPlayer, SourceError,
+    AvailablePlayer, FantasySource, FantasyTeam, LeagueSnapshot, LineupSlot, LineupStatus,
+    PlayerAvailability, PlayerEnrichment, Provider, RosteredPlayer, SourceError,
 };
+
+const FREE_AGENT_SLOT_IDS: [u8; 6] = [0, 2, 4, 6, 16, 17];
+const FREE_AGENTS_PER_POSITION: u8 = 12;
 
 // This is the read endpoint used by the `espn-api` Python library. ESPN does
 // not document it as a public integration API, so failures are surfaced with
@@ -87,6 +90,64 @@ impl EspnSource {
             .iter()
             .filter_map(|card| card.get("player").or(Some(card)))
             .filter_map(|player| normalize_player_enrichment(player, self.season, scoring_period))
+            .collect())
+    }
+
+    /// Retrieves a bounded, read-only pool of the league's available players.
+    /// ESPN includes waiver players in this view because they are actionable
+    /// additions, even when they cannot be added immediately.
+    pub async fn fetch_available_players(
+        &self,
+        scoring_period: u8,
+    ) -> Result<Vec<AvailablePlayer>, SourceError> {
+        let mut players = HashMap::new();
+        for slot_id in FREE_AGENT_SLOT_IDS {
+            for player in self
+                .fetch_available_players_for_slot(scoring_period, slot_id)
+                .await?
+            {
+                players
+                    .entry(player.provider_player_id.clone())
+                    .or_insert(player);
+            }
+        }
+        Ok(players.into_values().collect())
+    }
+
+    async fn fetch_available_players_for_slot(
+        &self,
+        scoring_period: u8,
+        slot_id: u8,
+    ) -> Result<Vec<AvailablePlayer>, SourceError> {
+        let url = format!("{ESPN_FANTASY_BASE}/seasons/{}/segments/0/leagues/{}?view=kona_player_info&scoringPeriodId={scoring_period}", self.season, self.league_id);
+        let filter = serde_json::json!({"players": {
+            "filterStatus": {"value": ["FREEAGENT", "WAIVERS"]},
+            "filterSlotIds": {"value": [slot_id]},
+            "limit": FREE_AGENTS_PER_POSITION,
+            "sortPercOwned": {"sortPriority": 1, "sortAsc": false},
+            "sortDraftRanks": {"sortPriority": 100, "sortAsc": true, "value": "STANDARD"}
+        }});
+        let response = self
+            .http
+            .get(url)
+            .header(header::COOKIE, self.cookie_header())
+            .header("x-fantasy-filter", filter.to_string())
+            .send()
+            .await?;
+        if let Some(error) = source_error_for_status(response.status()) {
+            return Err(error);
+        }
+        let payload: serde_json::Value = response.error_for_status()?.json().await?;
+        Ok(payload["players"]
+            .as_array()
+            .ok_or_else(|| {
+                SourceError::InvalidResponse(
+                    "ESPN available-player response had no players list.".to_owned(),
+                )
+            })?
+            .iter()
+            .filter_map(|card| card.get("player").or(Some(card)))
+            .filter_map(|player| normalize_available_player(player, self.season, scoring_period))
             .collect())
     }
 
@@ -404,6 +465,33 @@ fn normalize_player_enrichment(
             .map(str::to_owned),
         is_on_bye: None,
         projected_points,
+    })
+}
+
+fn normalize_available_player(
+    player: &serde_json::Value,
+    season: u16,
+    scoring_period: u8,
+) -> Option<AvailablePlayer> {
+    let enrichment = normalize_player_enrichment(player, season, scoring_period)?;
+    let position_id = player
+        .get("defaultPositionId")
+        .and_then(serde_json::Value::as_u64)
+        .map(|id| id as u8);
+    Some(AvailablePlayer {
+        provider_player_id: enrichment.provider_player_id.clone(),
+        espn_player_id: Some(enrichment.provider_player_id),
+        eligible_positions: eligible_positions(position_id),
+        is_locked: false,
+        full_name: enrichment.full_name,
+        position: enrichment.position,
+        nfl_team: enrichment.nfl_team,
+        availability: PlayerAvailability {
+            is_on_bye: enrichment.is_on_bye.unwrap_or(false),
+            is_confirmed_inactive: false,
+            injury_status: enrichment.injury_status,
+            projected_points: enrichment.projected_points,
+        },
     })
 }
 
