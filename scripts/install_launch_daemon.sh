@@ -7,6 +7,8 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 USER_NAME="$(id -un)"
 USER_HOME="$HOME"
 PLIST_PATH="/Library/LaunchDaemons/$LABEL.plist"
+INSTALL_DIR="/Library/Application Support/FantasyFootballManager"
+DAEMON_BINARY_PATH="$INSTALL_DIR/monitor"
 LOG_DIR="$USER_HOME/Library/Logs/fantasy-football-manager"
 TEMP_PLIST="$(mktemp)"
 
@@ -34,7 +36,7 @@ cat >"$TEMP_PLIST" <<PLIST
   <string>$LABEL</string>
   <key>ProgramArguments</key>
   <array>
-    <string>$PROJECT_ROOT/target/release/monitor</string>
+    <string>$DAEMON_BINARY_PATH</string>
   </array>
   <key>WorkingDirectory</key>
   <string>$PROJECT_ROOT</string>
@@ -60,10 +62,13 @@ cat >"$TEMP_PLIST" <<PLIST
 PLIST
 
 plutil -lint "$TEMP_PLIST"
+sudo install -d -o root -g wheel -m 755 "$INSTALL_DIR"
+sudo install -o root -g wheel -m 755 "$PROJECT_ROOT/target/release/monitor" "$DAEMON_BINARY_PATH"
 sudo install -o root -g wheel -m 644 "$TEMP_PLIST" "$PLIST_PATH"
 sudo launchctl bootout "system/$LABEL" 2>/dev/null || true
 sudo launchctl bootstrap system "$PLIST_PATH"
 sudo launchctl kickstart -k "system/$LABEL"
 
 echo "Installed $LABEL. It runs immediately and then every 30 minutes."
+echo "Installed binary: $DAEMON_BINARY_PATH (root-owned)"
 echo "Logs: $LOG_DIR/monitor.log and $LOG_DIR/monitor.error.log"

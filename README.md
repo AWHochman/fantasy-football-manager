@@ -120,9 +120,14 @@ bash scripts/install_launch_daemon.sh
 ```
 
 The installer builds the release binary, restricts `.env` to its owner, and
-installs a root-owned plist that runs the monitor as your macOS user
-immediately and then every 30 minutes. It writes logs under
-`~/Library/Logs/fantasy-football-manager/`.
+copies the binary to the root-owned path
+`/Library/Application Support/FantasyFootballManager/monitor`. The root-owned
+plist runs that copy as your macOS user immediately and then every 30 minutes.
+It writes logs under `~/Library/Logs/fantasy-football-manager/`.
+
+After reviewing a code update, rerun the installer to replace the root-owned
+binary. Editing files in this checkout alone cannot change what the daemon
+runs.
 
 To remove the automatic job without deleting logs or alert history:
 
