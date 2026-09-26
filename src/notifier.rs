@@ -40,20 +40,20 @@ impl EmailNotifier {
             config: EmailConfig::from_env()?,
         })
     }
-}
 
-#[async_trait]
-impl AlertNotifier for EmailNotifier {
-    async fn notify(&self, alerts: &[LineupAlert]) -> Result<(), NotifierError> {
-        if alerts.is_empty() {
-            return Ok(());
-        }
-
+    pub async fn send_test_email(&self) -> Result<(), NotifierError> {
         let email = Message::builder()
             .from(self.config.from.clone())
             .to(self.config.to.clone())
-            .subject(format!("Fantasy lineup alert: {} starter(s)", alerts.len()))
-            .body(format_alert_email(alerts))?;
+            .subject("Fantasy Monitor email delivery test")
+            .body(
+                "This is a test email from Fantasy Monitor. No roster action is required."
+                    .to_owned(),
+            )?;
+        self.send(email).await
+    }
+
+    async fn send(&self, email: Message) -> Result<(), NotifierError> {
         let credentials =
             Credentials::new(self.config.username.clone(), self.config.password.clone());
         let builder = match self.config.security {
@@ -71,6 +71,22 @@ impl AlertNotifier for EmailNotifier {
 
         mailer.send(email).await?;
         Ok(())
+    }
+}
+
+#[async_trait]
+impl AlertNotifier for EmailNotifier {
+    async fn notify(&self, alerts: &[LineupAlert]) -> Result<(), NotifierError> {
+        if alerts.is_empty() {
+            return Ok(());
+        }
+
+        let email = Message::builder()
+            .from(self.config.from.clone())
+            .to(self.config.to.clone())
+            .subject(format!("Fantasy lineup alert: {} starter(s)", alerts.len()))
+            .body(format_alert_email(alerts))?;
+        self.send(email).await
     }
 }
 

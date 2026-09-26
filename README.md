@@ -94,3 +94,9 @@ EMAIL_TO=you@example.com
 
 Use `implicit` TLS for port `465`, or `starttls` for port `587`. The monitor
 sends no email when it finds no alerts.
+
+To verify delivery without waiting for a roster alert, run:
+
+```sh
+cargo run --bin send_test_email
+```
