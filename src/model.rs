@@ -51,6 +51,24 @@ pub struct RosteredPlayer {
     pub availability: PlayerAvailability,
 }
 
+/// A player currently available to add in a league. Provider clients are
+/// responsible for determining availability; the optimizer treats this as a
+/// provider-neutral candidate.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct AvailablePlayer {
+    pub provider_player_id: String,
+    #[serde(default)]
+    pub espn_player_id: Option<String>,
+    #[serde(default)]
+    pub eligible_positions: Vec<String>,
+    #[serde(default)]
+    pub is_locked: bool,
+    pub full_name: String,
+    pub position: Option<String>,
+    pub nfl_team: Option<String>,
+    pub availability: PlayerAvailability,
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct PlayerEnrichment {
     pub provider_player_id: String,
