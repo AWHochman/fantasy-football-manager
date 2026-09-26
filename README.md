@@ -100,6 +100,10 @@ EMAIL_TO=you@example.com
 Use `implicit` TLS for port `465`, or `starttls` for port `587`. The monitor
 sends no email when it finds no alerts.
 
+Repeated runs email only newly detected or changed alerts. Active alerts are
+stored locally in `~/Library/Caches/fantasy-football-manager/active_alerts.json`
+on macOS; deleting that file resets the alert history.
+
 To verify delivery without waiting for a roster alert, run:
 
 ```sh

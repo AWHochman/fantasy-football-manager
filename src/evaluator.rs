@@ -3,7 +3,7 @@ use thiserror::Error;
 use crate::{LeagueSnapshot, LineupStatus, Provider};
 
 /// A reason a currently-started player needs the manager's attention.
-#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq, serde::Deserialize, serde::Serialize)]
 pub enum AlertReason {
     ByeWeek,
     ConfirmedUnavailable,

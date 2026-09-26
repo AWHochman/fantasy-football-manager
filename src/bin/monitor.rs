@@ -1,7 +1,7 @@
 use std::error::Error;
 
 use fantasy_football_manager::{
-    evaluate_team, fetch_managed_snapshots, AlertNotifier, AppConfig, EmailNotifier,
+    evaluate_team, fetch_managed_snapshots, AlertNotifier, AlertState, AppConfig, EmailNotifier,
 };
 
 #[tokio::main(flavor = "current_thread")]
@@ -15,13 +15,19 @@ async fn main() -> Result<(), Box<dyn Error>> {
         alerts.extend(evaluate_team(&managed.snapshot, &managed.team.team_id)?);
     }
 
-    if alerts.is_empty() {
-        println!("No actionable starter alerts.");
+    let mut state = AlertState::load();
+    let new_alerts = state.new_alerts(&alerts);
+    if new_alerts.is_empty() {
+        state.replace_active(&alerts);
+        state.save()?;
+        println!("No new actionable starter alerts.");
         return Ok(());
     }
 
-    EmailNotifier::from_env()?.notify(&alerts).await?;
-    println!("Sent {} lineup alert(s).", alerts.len());
+    EmailNotifier::from_env()?.notify(&new_alerts).await?;
+    state.replace_active(&alerts);
+    state.save()?;
+    println!("Sent {} new lineup alert(s).", new_alerts.len());
 
     Ok(())
 }

@@ -13,6 +13,7 @@ mod notifier;
 mod runtime;
 mod sleeper;
 mod source;
+mod state;
 
 pub use algorithm::merge_player_enrichment;
 pub use config::{AppConfig, ConfigError, ManagedTeam};
@@ -27,3 +28,4 @@ pub use notifier::{format_alert_email, AlertNotifier, EmailNotifier, NotifierErr
 pub use runtime::{fetch_managed_snapshots, ManagedSnapshot, RuntimeError};
 pub use sleeper::SleeperSource;
 pub use source::FantasySource;
+pub use state::{AlertState, AlertStateError};
