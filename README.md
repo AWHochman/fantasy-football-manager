@@ -109,3 +109,23 @@ To verify delivery without waiting for a roster alert, run:
 ```sh
 cargo run --bin send_test_email
 ```
+
+## Automatic Checks on macOS
+
+To run checks while the Mac is powered on, including at the login screen,
+install the system LaunchDaemon:
+
+```sh
+bash scripts/install_launch_daemon.sh
+```
+
+The installer builds the release binary, restricts `.env` to its owner, and
+installs a root-owned plist that runs the monitor as your macOS user
+immediately and then every 30 minutes. It writes logs under
+`~/Library/Logs/fantasy-football-manager/`.
+
+To remove the automatic job without deleting logs or alert history:
+
+```sh
+bash scripts/uninstall_launch_daemon.sh
+```
