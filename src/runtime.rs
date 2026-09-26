@@ -184,7 +184,7 @@ async fn enrich_snapshots(
 }
 
 async fn apply_game_locks(snapshots: Vec<ManagedSnapshot>) -> Vec<ManagedSnapshot> {
-    let Ok(locked_teams) = NflGameStatusSource::new().fetch_locked_teams().await else {
+    let Ok(team_statuses) = NflGameStatusSource::new().fetch_team_statuses().await else {
         return snapshots;
     };
 
@@ -196,14 +196,26 @@ async fn apply_game_locks(snapshots: Vec<ManagedSnapshot>) -> Vec<ManagedSnapsho
                     player.is_locked = player
                         .nfl_team
                         .as_deref()
-                        .is_some_and(|team| locked_teams.contains(team));
+                        .and_then(|team| team_statuses.get(team))
+                        .is_some_and(|status| status.is_locked);
+                    player.game_start_time = player
+                        .nfl_team
+                        .as_deref()
+                        .and_then(|team| team_statuses.get(team))
+                        .map(|status| status.game_start_time);
                 }
             }
             for player in &mut managed.available_players {
                 player.is_locked = player
                     .nfl_team
                     .as_deref()
-                    .is_some_and(|team| locked_teams.contains(team));
+                    .and_then(|team| team_statuses.get(team))
+                    .is_some_and(|status| status.is_locked);
+                player.game_start_time = player
+                    .nfl_team
+                    .as_deref()
+                    .and_then(|team| team_statuses.get(team))
+                    .map(|status| status.game_start_time);
             }
             managed.locks_known = true;
             managed

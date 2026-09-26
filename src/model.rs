@@ -1,3 +1,4 @@
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
@@ -43,6 +44,8 @@ pub struct RosteredPlayer {
     pub eligible_positions: Vec<String>,
     #[serde(default)]
     pub is_locked: bool,
+    #[serde(default)]
+    pub game_start_time: Option<DateTime<Utc>>,
     pub full_name: String,
     pub position: Option<String>,
     pub nfl_team: Option<String>,
@@ -63,6 +66,8 @@ pub struct AvailablePlayer {
     pub eligible_positions: Vec<String>,
     #[serde(default)]
     pub is_locked: bool,
+    #[serde(default)]
+    pub game_start_time: Option<DateTime<Utc>>,
     pub full_name: String,
     pub position: Option<String>,
     pub nfl_team: Option<String>,

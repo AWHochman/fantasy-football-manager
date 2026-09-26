@@ -261,6 +261,7 @@ fn normalize(league_id: u64, league: EspnLeague) -> LeagueSnapshot {
                             entry.player_pool_entry.player.default_position_id,
                         ),
                         is_locked: false,
+                        game_start_time: None,
                         full_name: entry
                             .player_pool_entry
                             .player
@@ -483,6 +484,7 @@ fn normalize_available_player(
         espn_player_id: Some(enrichment.provider_player_id),
         eligible_positions: eligible_positions(position_id),
         is_locked: false,
+        game_start_time: None,
         full_name: enrichment.full_name,
         position: enrichment.position,
         nfl_team: enrichment.nfl_team,

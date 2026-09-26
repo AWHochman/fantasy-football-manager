@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
+use chrono::{DateTime, Utc};
 use thiserror::Error;
 
 use crate::{AvailablePlayer, LeagueSnapshot, LineupSlot, LineupStatus, Provider, RosteredPlayer};
@@ -24,6 +25,8 @@ pub struct LineupRecommendation {
     pub current_projected_points: f64,
     pub optimized_projected_points: f64,
     pub projected_gain: f64,
+    /// The earliest kickoff among players whose lineup status changes.
+    pub action_by: Option<DateTime<Utc>>,
     pub assignments: Vec<LineupAssignment>,
 }
 
@@ -173,6 +176,7 @@ pub fn recommend_optimal_lineup(
         current_projected_points,
         optimized_projected_points,
         projected_gain,
+        action_by: recommendation_deadline(&team.players, &assignments, None),
         assignments,
     }))
 }
@@ -249,6 +253,7 @@ pub fn recommend_free_agent_lineup(
             current_projected_points,
             optimized_projected_points,
             projected_gain,
+            action_by: recommendation_deadline(&team.players, &assignments, Some(free_agent)),
             assignments,
         };
         let recommendation = FreeAgentRecommendation {
@@ -292,12 +297,43 @@ fn starter_projection_total(team: &crate::FantasyTeam) -> Option<f64> {
         .map(|points| points.into_iter().sum())
 }
 
+fn recommendation_deadline(
+    current_players: &[RosteredPlayer],
+    assignments: &[LineupAssignment],
+    added_player: Option<&AvailablePlayer>,
+) -> Option<DateTime<Utc>> {
+    let selected_ids: HashSet<_> = assignments
+        .iter()
+        .map(|assignment| assignment.player_id.as_str())
+        .collect();
+    let current_starter_ids: HashSet<_> = current_players
+        .iter()
+        .filter(|player| player.lineup_status == LineupStatus::Starter)
+        .map(|player| player.provider_player_id.as_str())
+        .collect();
+
+    current_players
+        .iter()
+        .filter(|player| {
+            selected_ids.contains(player.provider_player_id.as_str())
+                != current_starter_ids.contains(player.provider_player_id.as_str())
+        })
+        .filter_map(|player| player.game_start_time)
+        .chain(
+            added_player
+                .filter(|player| selected_ids.contains(player.provider_player_id.as_str()))
+                .and_then(|player| player.game_start_time),
+        )
+        .min()
+}
+
 fn rostered_free_agent(player: &AvailablePlayer) -> RosteredPlayer {
     RosteredPlayer {
         provider_player_id: player.provider_player_id.clone(),
         espn_player_id: player.espn_player_id.clone(),
         eligible_positions: player.eligible_positions.clone(),
         is_locked: player.is_locked,
+        game_start_time: player.game_start_time,
         full_name: player.full_name.clone(),
         position: player.position.clone(),
         nfl_team: player.nfl_team.clone(),
@@ -426,6 +462,8 @@ fn is_eligible(player: &RosteredPlayer, slot: &LineupSlot) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use chrono::{TimeZone, Utc};
+
     use crate::{AvailablePlayer, FantasyTeam, LineupSlot, PlayerAvailability};
 
     use super::*;
@@ -442,6 +480,7 @@ mod tests {
             espn_player_id: None,
             eligible_positions: vec![position.to_owned()],
             is_locked: false,
+            game_start_time: None,
             full_name: id.to_owned(),
             position: Some(position.to_owned()),
             nfl_team: None,
@@ -486,6 +525,7 @@ mod tests {
             espn_player_id: None,
             eligible_positions: vec![position.to_owned()],
             is_locked: false,
+            game_start_time: None,
             full_name: id.to_owned(),
             position: Some(position.to_owned()),
             nfl_team: None,
@@ -580,5 +620,29 @@ mod tests {
         .expect("better add/drop lineup");
 
         assert_ne!(recommendation.drop_player_id, "locked-bench");
+    }
+
+    #[test]
+    fn sets_a_deadline_from_the_earliest_affected_player() {
+        let mut starter = player("wr-low", "WR", "FLEX", LineupStatus::Starter, 7.0);
+        starter.game_start_time = Some(Utc.with_ymd_and_hms(2026, 9, 27, 17, 0, 0).unwrap());
+        let mut bench = player("rb-high", "RB", "BENCH", LineupStatus::Bench, 16.0);
+        bench.game_start_time = Some(Utc.with_ymd_and_hms(2026, 9, 27, 20, 25, 0).unwrap());
+        let recommendation = recommend_optimal_lineup(
+            &snapshot(vec![
+                player("rb-low", "RB", "RB", LineupStatus::Starter, 8.0),
+                starter,
+                bench,
+            ]),
+            "team",
+            DEFAULT_MINIMUM_PROJECTED_GAIN,
+        )
+        .expect("valid roster")
+        .expect("better lineup");
+
+        assert_eq!(
+            recommendation.action_by,
+            Some(Utc.with_ymd_and_hms(2026, 9, 27, 17, 0, 0).unwrap())
+        );
     }
 }

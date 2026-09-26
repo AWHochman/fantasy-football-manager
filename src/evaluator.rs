@@ -113,6 +113,7 @@ mod tests {
             espn_player_id: None,
             eligible_positions: vec!["WR".to_owned()],
             is_locked: false,
+            game_start_time: None,
             full_name: format!("Player {id}"),
             position: Some("WR".to_owned()),
             nfl_team: Some("BUF".to_owned()),

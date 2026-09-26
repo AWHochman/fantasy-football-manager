@@ -1,6 +1,7 @@
 use std::env;
 
 use async_trait::async_trait;
+use chrono::{DateTime, Local, Utc};
 use lettre::{
     message::Mailbox, transport::smtp::authentication::Credentials, AsyncSmtpTransport,
     AsyncTransport, Message, Tokio1Executor,
@@ -130,6 +131,7 @@ pub fn format_alert_email(alerts: &[MonitorAlert]) -> String {
                     recommendation.current_projected_points,
                     recommendation.optimized_projected_points,
                 ));
+                append_deadline(&mut body, recommendation.action_by);
                 for assignment in &recommendation.assignments {
                     body.push_str(&format!(
                         "  {}: {} ({:.1})\n",
@@ -150,6 +152,7 @@ pub fn format_alert_email(alerts: &[MonitorAlert]) -> String {
                     lineup.current_projected_points,
                     lineup.optimized_projected_points,
                 ));
+                append_deadline(&mut body, lineup.action_by);
                 for assignment in &lineup.assignments {
                     body.push_str(&format!(
                         "  {}: {} ({:.1})\n",
@@ -160,6 +163,17 @@ pub fn format_alert_email(alerts: &[MonitorAlert]) -> String {
         }
     }
     body
+}
+
+fn append_deadline(body: &mut String, deadline: Option<DateTime<Utc>>) {
+    if let Some(deadline) = deadline {
+        body.push_str(&format!(
+            "  Act by: {}\n",
+            deadline
+                .with_timezone(&Local)
+                .format("%a, %b %-d at %-I:%M %p %Z")
+        ));
+    }
 }
 
 fn format_starter_alert(body: &mut String, alert: &LineupAlert) {
@@ -242,6 +256,7 @@ mod tests {
         FreeAgentRecommendation, LineupAlert, LineupAssignment, LineupRecommendation, MonitorAlert,
         Provider,
     };
+    use chrono::{TimeZone, Utc};
 
     use super::*;
 
@@ -279,6 +294,7 @@ mod tests {
                     current_projected_points: 90.0,
                     optimized_projected_points: 96.0,
                     projected_gain: 6.0,
+                    action_by: Some(Utc.with_ymd_and_hms(2026, 9, 27, 17, 0, 0).unwrap()),
                     assignments: vec![LineupAssignment {
                         slot_name: "WR".to_owned(),
                         player_id: "3".to_owned(),
@@ -295,6 +311,7 @@ mod tests {
         )]);
 
         assert!(body.contains("add New Player (14.0) and drop Old Player"));
+        assert!(body.contains("Act by:"));
         assert!(body.contains("WR: New Player (14.0)"));
     }
 }

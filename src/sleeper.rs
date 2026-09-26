@@ -90,6 +90,7 @@ impl SleeperSource {
                         espn_player_id: player.espn_id,
                         eligible_positions,
                         is_locked: false,
+                        game_start_time: None,
                         full_name: player
                             .full_name
                             .unwrap_or_else(|| "Unknown player".to_owned()),
@@ -258,6 +259,7 @@ fn normalize(
                             .map(|value| value.eligible_positions())
                             .unwrap_or_default(),
                         is_locked: false,
+                        game_start_time: None,
                         full_name: player
                             .and_then(|value| value.full_name.clone())
                             .unwrap_or_else(|| "Unknown player".to_owned()),

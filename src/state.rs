@@ -235,6 +235,7 @@ mod tests {
             current_projected_points: 100.0,
             optimized_projected_points: 100.0 + projected_gain,
             projected_gain,
+            action_by: None,
             assignments: vec![LineupAssignment {
                 slot_name: "WR".to_owned(),
                 player_id: "player".to_owned(),

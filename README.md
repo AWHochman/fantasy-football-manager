@@ -115,6 +115,11 @@ ESPN and Sleeper snapshots. If that game-status request is unavailable, the
 monitor still runs the starter-health checks but deliberately skips lineup
 recommendations for that run.
 
+Every lineup recommendation includes an `Act by` deadline when the NFL
+schedule provides kickoff data. It is the earliest local kickoff among players
+whose starting status would change, so the recommendation can still be acted
+on before any relevant lineup slot locks.
+
 The monitor also checks whether a single available-player add and unlocked
 drop would improve the valid lineup by at least 1.0 projected point. ESPN
 candidate pools include free agents and waiver players; Sleeper candidates are
