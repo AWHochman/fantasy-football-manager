@@ -11,6 +11,8 @@ pub struct LeagueSnapshot {
     pub provider: Provider,
     pub league_id: String,
     pub league_name: String,
+    #[serde(default)]
+    pub scoring_period: Option<u8>,
     pub teams: Vec<FantasyTeam>,
 }
 
@@ -26,6 +28,8 @@ pub struct FantasyTeam {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct RosteredPlayer {
     pub provider_player_id: String,
+    #[serde(default)]
+    pub espn_player_id: Option<String>,
     pub full_name: String,
     pub position: Option<String>,
     pub nfl_team: Option<String>,

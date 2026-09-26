@@ -1,10 +1,10 @@
-use std::env;
+use std::{collections::HashMap, collections::HashSet, env};
 
 use thiserror::Error;
 
 use crate::{
-    AppConfig, ConfigError, EspnSource, FantasySource, LeagueSnapshot, ManagedTeam, Provider,
-    SleeperSource, SourceError,
+    merge_player_enrichment, AppConfig, ConfigError, EspnSource, FantasySource, LeagueSnapshot,
+    ManagedTeam, PlayerEnrichment, Provider, SleeperSource, SourceError,
 };
 
 #[derive(Clone, Debug)]
@@ -23,10 +23,12 @@ pub enum RuntimeError {
     MissingEspnSetting(&'static str),
     #[error("ESPN_LEAGUE_ID must be numeric: {0}")]
     InvalidEspnLeagueId(#[from] std::num::ParseIntError),
+    #[error("ESPN did not provide a current scoring period")]
+    MissingEspnScoringPeriod,
 }
 
-/// Retrieves every configured league while keeping API work outside the core
-/// enrichment and evaluation algorithms.
+/// Retrieves and enriches every configured league while keeping API work
+/// outside the core enrichment and evaluation algorithms.
 pub async fn fetch_managed_snapshots(
     config: &AppConfig,
 ) -> Result<Vec<ManagedSnapshot>, RuntimeError> {
@@ -54,7 +56,74 @@ pub async fn fetch_managed_snapshots(
         });
     }
 
-    Ok(snapshots)
+    enrich_snapshots(snapshots, espn.as_ref()).await
+}
+
+async fn enrich_snapshots(
+    snapshots: Vec<ManagedSnapshot>,
+    espn: Option<&EspnSession>,
+) -> Result<Vec<ManagedSnapshot>, RuntimeError> {
+    let Some(session) = espn else {
+        return Ok(snapshots);
+    };
+    let Some(reference_league) = snapshots
+        .iter()
+        .find(|managed| managed.team.provider == Provider::Espn)
+    else {
+        return Ok(snapshots);
+    };
+    let scoring_period = reference_league
+        .snapshot
+        .scoring_period
+        .ok_or(RuntimeError::MissingEspnScoringPeriod)?;
+
+    let mut ids = HashSet::new();
+    let mut sleeper_to_espn = HashMap::new();
+    for managed in &snapshots {
+        for team in &managed.snapshot.teams {
+            for player in &team.players {
+                let espn_id = player.espn_player_id.as_ref();
+                if let Some(espn_id) = espn_id {
+                    if let Ok(id) = espn_id.parse::<i64>() {
+                        if id > 0 {
+                            ids.insert(id);
+                        }
+                    }
+                    if managed.team.provider == Provider::Sleeper {
+                        sleeper_to_espn.insert(player.provider_player_id.clone(), espn_id.clone());
+                    }
+                }
+            }
+        }
+    }
+    if ids.is_empty() {
+        return Ok(snapshots);
+    }
+
+    let source = EspnSource::new(
+        reference_league.team.league_id.parse::<u64>()?,
+        session.season,
+        &session.swid,
+        &session.espn_s2,
+    );
+    let enrichment_by_espn_id: HashMap<String, PlayerEnrichment> = source
+        .fetch_player_enrichment(&ids.into_iter().collect::<Vec<_>>(), scoring_period)
+        .await?
+        .into_iter()
+        .map(|enrichment| (enrichment.provider_player_id.clone(), enrichment))
+        .collect();
+
+    Ok(snapshots
+        .into_iter()
+        .map(|managed| ManagedSnapshot {
+            snapshot: merge_player_enrichment(
+                &managed.snapshot,
+                &enrichment_by_espn_id,
+                &sleeper_to_espn,
+            ),
+            team: managed.team,
+        })
+        .collect())
 }
 
 struct EspnSession {

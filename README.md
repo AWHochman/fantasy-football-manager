@@ -68,7 +68,7 @@ Configure every team you want monitored through `MANAGED_TEAMS_JSON` in your
 local `.env` file. For example:
 
 ```dotenv
-MANAGED_TEAMS_JSON=[{"provider":"Sleeper","league_id":"123","team_id":"3"},{"provider":"Espn","league_id":"456","team_id":"8"}]
+MANAGED_TEAMS_JSON='[{"provider":"Sleeper","league_id":"123","team_id":"3"},{"provider":"Espn","league_id":"456","team_id":"8"}]'
 ```
 
 For Sleeper, `team_id` is its `roster_id`. For ESPN, it is the team `id` from

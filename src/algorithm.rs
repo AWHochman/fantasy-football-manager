@@ -52,6 +52,7 @@ mod tests {
             provider: Provider::Sleeper,
             league_id: "sleeper-league".to_owned(),
             league_name: "Sleeper league".to_owned(),
+            scoring_period: None,
             teams: vec![FantasyTeam {
                 team_id: "team".to_owned(),
                 team_name: "My team".to_owned(),
@@ -59,6 +60,7 @@ mod tests {
                 owner_name: None,
                 players: vec![RosteredPlayer {
                     provider_player_id: "sleeper-1".to_owned(),
+                    espn_player_id: Some("espn-1".to_owned()),
                     full_name: "Player One".to_owned(),
                     position: Some("WR".to_owned()),
                     nfl_team: Some("BUF".to_owned()),

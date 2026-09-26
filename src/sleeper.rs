@@ -118,6 +118,7 @@ fn normalize(
 
                     RosteredPlayer {
                         provider_player_id: player_id,
+                        espn_player_id: player.and_then(|value| value.espn_id.clone()),
                         full_name: player
                             .and_then(|value| value.full_name.clone())
                             .unwrap_or_else(|| "Unknown player".to_owned()),
@@ -155,6 +156,7 @@ fn normalize(
         league_name: league
             .name
             .unwrap_or_else(|| format!("Sleeper league {league_id}")),
+        scoring_period: None,
         teams,
     }
 }
@@ -191,6 +193,8 @@ struct SleeperRoster {
 
 #[derive(Deserialize)]
 struct SleeperPlayer {
+    #[serde(default, deserialize_with = "optional_string_or_number")]
+    espn_id: Option<String>,
     full_name: Option<String>,
     position: Option<String>,
     team: Option<String>,
@@ -203,6 +207,18 @@ where
     T: Default + Deserialize<'de>,
 {
     Option::<T>::deserialize(deserializer).map(Option::unwrap_or_default)
+}
+
+fn optional_string_or_number<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = Option::<serde_json::Value>::deserialize(deserializer)?;
+    Ok(value.and_then(|value| match value {
+        serde_json::Value::String(value) => Some(value),
+        serde_json::Value::Number(value) => Some(value.to_string()),
+        _ => None,
+    }))
 }
 
 #[cfg(test)]
@@ -235,6 +251,7 @@ mod tests {
                 (
                     "p1".to_owned(),
                     SleeperPlayer {
+                        espn_id: Some("1001".to_owned()),
                         full_name: Some("Starter Player".to_owned()),
                         position: Some("WR".to_owned()),
                         team: Some("NYJ".to_owned()),
@@ -244,6 +261,7 @@ mod tests {
                 (
                     "p2".to_owned(),
                     SleeperPlayer {
+                        espn_id: None,
                         full_name: Some("Reserve Player".to_owned()),
                         position: Some("RB".to_owned()),
                         team: Some("NE".to_owned()),
@@ -275,5 +293,16 @@ mod tests {
         assert!(roster.players.is_empty());
         assert!(roster.starters.is_empty());
         assert!(roster.reserve.is_empty());
+    }
+
+    #[test]
+    fn accepts_numeric_or_string_espn_ids() {
+        let numeric: SleeperPlayer = serde_json::from_str(r#"{"espn_id": 3926590}"#)
+            .expect("numeric ESPN IDs should deserialize");
+        let string: SleeperPlayer = serde_json::from_str(r#"{"espn_id": "3926591"}"#)
+            .expect("string ESPN IDs should deserialize");
+
+        assert_eq!(numeric.espn_id.as_deref(), Some("3926590"));
+        assert_eq!(string.espn_id.as_deref(), Some("3926591"));
     }
 }

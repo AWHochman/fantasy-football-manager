@@ -110,6 +110,7 @@ mod tests {
     fn player(id: &str, status: LineupStatus, availability: PlayerAvailability) -> RosteredPlayer {
         RosteredPlayer {
             provider_player_id: id.to_owned(),
+            espn_player_id: None,
             full_name: format!("Player {id}"),
             position: Some("WR".to_owned()),
             nfl_team: Some("BUF".to_owned()),
@@ -137,6 +138,7 @@ mod tests {
             provider: Provider::Sleeper,
             league_id: "league-1".to_owned(),
             league_name: "Test league".to_owned(),
+            scoring_period: None,
             teams: vec![FantasyTeam {
                 team_id: "team-1".to_owned(),
                 team_name: "My team".to_owned(),

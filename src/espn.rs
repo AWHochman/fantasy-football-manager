@@ -183,6 +183,7 @@ fn normalize(league_id: u64, league: EspnLeague) -> LeagueSnapshot {
                     let status = lineup_status(entry.lineup_slot_id);
                     RosteredPlayer {
                         provider_player_id: entry.player_id.to_string(),
+                        espn_player_id: Some(entry.player_id.to_string()),
                         full_name: entry
                             .player_pool_entry
                             .player
@@ -210,6 +211,7 @@ fn normalize(league_id: u64, league: EspnLeague) -> LeagueSnapshot {
         provider: Provider::Espn,
         league_id: league_id.to_string(),
         league_name,
+        scoring_period: league.scoring_period_id,
         teams,
     }
 }
@@ -348,6 +350,7 @@ fn normalize_player_enrichment(
 #[serde(rename_all = "camelCase")]
 struct EspnLeague {
     name: Option<String>,
+    scoring_period_id: Option<u8>,
     #[serde(default, deserialize_with = "null_to_default")]
     settings: EspnSettings,
     #[serde(default, deserialize_with = "null_to_default")]
