@@ -1,4 +1,9 @@
-use std::collections::HashMap;
+use std::{
+    collections::HashMap,
+    env, fs,
+    path::{Path, PathBuf},
+    time::{Duration, SystemTime},
+};
 
 use async_trait::async_trait;
 use reqwest::Client;
@@ -10,11 +15,13 @@ use crate::{
 };
 
 const SLEEPER_API_BASE: &str = "https://api.sleeper.app/v1";
+const PLAYER_CACHE_TTL: Duration = Duration::from_secs(60 * 60 * 24);
 
 /// Read-only client for one Sleeper NFL league.
 pub struct SleeperSource {
     http: Client,
     league_id: String,
+    players_cache_path: PathBuf,
 }
 
 impl SleeperSource {
@@ -22,6 +29,7 @@ impl SleeperSource {
         Self {
             http: Client::new(),
             league_id: league_id.into(),
+            players_cache_path: default_players_cache_path(),
         }
     }
 
@@ -29,7 +37,25 @@ impl SleeperSource {
         Self {
             http,
             league_id: league_id.into(),
+            players_cache_path: default_players_cache_path(),
         }
+    }
+
+    /// Overrides the local Sleeper player-catalog cache location.
+    pub fn with_players_cache_path(mut self, path: impl Into<PathBuf>) -> Self {
+        self.players_cache_path = path.into();
+        self
+    }
+
+    async fn fetch_players(&self) -> Result<HashMap<String, SleeperPlayer>, SourceError> {
+        if let Some(players) = load_cached_players(&self.players_cache_path) {
+            return Ok(players);
+        }
+
+        let players_url = format!("{SLEEPER_API_BASE}/players/nfl");
+        let players = get_json::<HashMap<String, SleeperPlayer>>(&self.http, &players_url).await?;
+        write_cached_players(&self.players_cache_path, &players);
+        Ok(players)
     }
 }
 
@@ -43,17 +69,64 @@ impl FantasySource for SleeperSource {
         let league_url = format!("{SLEEPER_API_BASE}/league/{}", self.league_id);
         let users_url = format!("{SLEEPER_API_BASE}/league/{}/users", self.league_id);
         let rosters_url = format!("{SLEEPER_API_BASE}/league/{}/rosters", self.league_id);
-        let players_url = format!("{SLEEPER_API_BASE}/players/nfl");
-
         let (league, users, rosters, players) = tokio::try_join!(
             get_json::<SleeperLeague>(&self.http, &league_url),
             get_json::<Vec<SleeperUser>>(&self.http, &users_url),
             get_json::<Vec<SleeperRoster>>(&self.http, &rosters_url),
-            get_json::<HashMap<String, SleeperPlayer>>(&self.http, &players_url),
+            self.fetch_players(),
         )?;
 
         Ok(normalize(&self.league_id, league, users, rosters, players))
     }
+}
+
+fn default_players_cache_path() -> PathBuf {
+    if let Some(path) = env::var_os("FANTASY_FOOTBALL_CACHE_DIR") {
+        return PathBuf::from(path).join("sleeper_players.json");
+    }
+
+    let cache_root = env::var_os("HOME")
+        .map(PathBuf::from)
+        .map(home_cache_directory)
+        .unwrap_or_else(env::temp_dir);
+    cache_root
+        .join("fantasy-football-manager")
+        .join("sleeper_players.json")
+}
+
+#[cfg(target_os = "macos")]
+fn home_cache_directory(home: PathBuf) -> PathBuf {
+    home.join("Library").join("Caches")
+}
+
+#[cfg(not(target_os = "macos"))]
+fn home_cache_directory(home: PathBuf) -> PathBuf {
+    home.join(".cache")
+}
+
+fn load_cached_players(path: &Path) -> Option<HashMap<String, SleeperPlayer>> {
+    let modified = fs::metadata(path).ok()?.modified().ok()?;
+    if !cache_is_fresh(modified, SystemTime::now()) {
+        return None;
+    }
+    serde_json::from_slice(&fs::read(path).ok()?).ok()
+}
+
+fn write_cached_players(path: &Path, players: &HashMap<String, SleeperPlayer>) {
+    let Some(parent) = path.parent() else {
+        return;
+    };
+    let Ok(bytes) = serde_json::to_vec(players) else {
+        return;
+    };
+    if fs::create_dir_all(parent).is_ok() {
+        let _ = fs::write(path, bytes);
+    }
+}
+
+fn cache_is_fresh(modified: SystemTime, now: SystemTime) -> bool {
+    now.duration_since(modified)
+        .is_ok_and(|age| age <= PLAYER_CACHE_TTL)
 }
 
 async fn get_json<T: for<'de> Deserialize<'de>>(
@@ -191,7 +264,7 @@ struct SleeperRoster {
     reserve: Vec<String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, serde::Serialize)]
 struct SleeperPlayer {
     #[serde(default, deserialize_with = "optional_string_or_number")]
     espn_id: Option<String>,
@@ -304,5 +377,15 @@ mod tests {
 
         assert_eq!(numeric.espn_id.as_deref(), Some("3926590"));
         assert_eq!(string.espn_id.as_deref(), Some("3926591"));
+    }
+
+    #[test]
+    fn considers_only_recent_player_catalogs_fresh() {
+        let now = SystemTime::now();
+        let fresh = now.checked_sub(Duration::from_secs(60 * 60 * 23)).unwrap();
+        let stale = now.checked_sub(Duration::from_secs(60 * 60 * 25)).unwrap();
+
+        assert!(cache_is_fresh(fresh, now));
+        assert!(!cache_is_fresh(stale, now));
     }
 }

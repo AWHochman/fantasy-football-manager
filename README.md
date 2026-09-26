@@ -34,6 +34,11 @@ let espn_snapshot = espn.fetch_league().await?;
 Never commit ESPN cookie values. Place them in a local `.env` file or a system
 secret store; `.env` is ignored by Git.
 
+The large Sleeper player catalog is cached locally for 24 hours; league,
+roster, and user data are always fetched live. On macOS the default cache is
+`~/Library/Caches/fantasy-football-manager/sleeper_players.json`. Set
+`FANTASY_FOOTBALL_CACHE_DIR` in `.env` to use a different cache directory.
+
 ## Live read test
 
 Copy `.env.example` to `.env`, then fill in the following local values:
