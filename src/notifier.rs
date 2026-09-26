@@ -53,6 +53,32 @@ impl EmailNotifier {
         self.send(email).await
     }
 
+    pub async fn send_espn_session_refresh_email(&self) -> Result<(), NotifierError> {
+        let email = Message::builder()
+            .from(self.config.from.clone())
+            .to(self.config.to.clone())
+            .subject("Fantasy Monitor needs a refreshed ESPN session")
+            .body(
+                "ESPN rejected the saved session, so Fantasy Monitor could not check your ESPN leagues.\n\n\
+Sign in at fantasy.espn.com, open browser developer tools, and copy the espn_s2 cookie from the fantasy.espn.com site storage. Replace ESPN_S2 in your local .env file with that value.\n\n\
+The next scheduled check will confirm that monitoring has recovered."
+                    .to_owned(),
+            )?;
+        self.send(email).await
+    }
+
+    pub async fn send_espn_session_recovered_email(&self) -> Result<(), NotifierError> {
+        let email = Message::builder()
+            .from(self.config.from.clone())
+            .to(self.config.to.clone())
+            .subject("Fantasy Monitor ESPN session restored")
+            .body(
+                "Fantasy Monitor successfully read your ESPN leagues again. Regular roster monitoring has resumed."
+                    .to_owned(),
+            )?;
+        self.send(email).await
+    }
+
     async fn send(&self, email: Message) -> Result<(), NotifierError> {
         let credentials =
             Credentials::new(self.config.username.clone(), self.config.password.clone());

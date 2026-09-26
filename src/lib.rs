@@ -28,4 +28,4 @@ pub use notifier::{format_alert_email, AlertNotifier, EmailNotifier, NotifierErr
 pub use runtime::{fetch_managed_snapshots, ManagedSnapshot, RuntimeError};
 pub use sleeper::SleeperSource;
 pub use source::FantasySource;
-pub use state::{AlertState, AlertStateError};
+pub use state::{AlertState, AlertStateError, MonitorHealthState};

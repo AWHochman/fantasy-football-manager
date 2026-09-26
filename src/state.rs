@@ -18,6 +18,46 @@ pub struct AlertState {
     active: HashSet<AlertFingerprint>,
 }
 
+/// Local memory of monitor health notifications, used to avoid repeating the
+/// same configuration warning on every scheduled run.
+pub struct MonitorHealthState {
+    path: PathBuf,
+    data: MonitorHealthData,
+}
+
+impl MonitorHealthState {
+    pub fn load() -> Self {
+        let path = cache_file("monitor_health.json");
+        let data = fs::read(&path)
+            .ok()
+            .and_then(|contents| serde_json::from_slice(&contents).ok())
+            .unwrap_or_default();
+        Self { path, data }
+    }
+
+    /// Returns true only when this is a newly observed authentication failure.
+    pub fn mark_espn_authentication_failed(&mut self) -> bool {
+        if self.data.espn_authentication_failure_active {
+            return false;
+        }
+        self.data.espn_authentication_failure_active = true;
+        true
+    }
+
+    /// Returns true only when a previous authentication failure has recovered.
+    pub fn mark_espn_authentication_recovered(&mut self) -> bool {
+        if !self.data.espn_authentication_failure_active {
+            return false;
+        }
+        self.data.espn_authentication_failure_active = false;
+        true
+    }
+
+    pub fn save(&self) -> Result<(), AlertStateError> {
+        save_json(&self.path, &self.data)
+    }
+}
+
 impl AlertState {
     pub fn load() -> Self {
         let path = default_state_path();
@@ -41,22 +81,17 @@ impl AlertState {
     }
 
     pub fn save(&self) -> Result<(), AlertStateError> {
-        let contents = serde_json::to_vec(&self.active)?;
-        let parent = self.path.parent().ok_or_else(|| {
-            std::io::Error::new(std::io::ErrorKind::InvalidInput, "state path has no parent")
-        })?;
-        fs::create_dir_all(parent)?;
-
-        let temporary_path = self.path.with_extension("tmp");
-        fs::write(&temporary_path, contents)?;
-        fs::rename(temporary_path, &self.path)?;
-        Ok(())
+        save_json(&self.path, &self.active)
     }
 }
 
 fn default_state_path() -> PathBuf {
+    cache_file("active_alerts.json")
+}
+
+fn cache_file(file_name: &str) -> PathBuf {
     if let Some(path) = env::var_os("FANTASY_FOOTBALL_CACHE_DIR") {
-        return PathBuf::from(path).join("active_alerts.json");
+        return PathBuf::from(path).join(file_name);
     }
 
     env::var_os("HOME")
@@ -64,7 +99,20 @@ fn default_state_path() -> PathBuf {
         .map(home_cache_directory)
         .unwrap_or_else(env::temp_dir)
         .join("fantasy-football-manager")
-        .join("active_alerts.json")
+        .join(file_name)
+}
+
+fn save_json<T: serde::Serialize>(path: &PathBuf, value: &T) -> Result<(), AlertStateError> {
+    let contents = serde_json::to_vec(value)?;
+    let parent = path.parent().ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::InvalidInput, "state path has no parent")
+    })?;
+    fs::create_dir_all(parent)?;
+
+    let temporary_path = path.with_extension("tmp");
+    fs::write(&temporary_path, contents)?;
+    fs::rename(temporary_path, path)?;
+    Ok(())
 }
 
 #[cfg(target_os = "macos")]
@@ -96,6 +144,12 @@ impl From<&LineupAlert> for AlertFingerprint {
             reasons: alert.reasons.clone(),
         }
     }
+}
+
+#[derive(Default, serde::Deserialize, serde::Serialize)]
+struct MonitorHealthData {
+    #[serde(default)]
+    espn_authentication_failure_active: bool,
 }
 
 #[cfg(test)]
@@ -142,5 +196,18 @@ mod tests {
 
         state.replace_active(&[]);
         assert_eq!(state.new_alerts(&[current]).len(), 1);
+    }
+
+    #[test]
+    fn reports_health_transitions_once() {
+        let mut state = MonitorHealthState {
+            path: PathBuf::new(),
+            data: MonitorHealthData::default(),
+        };
+
+        assert!(state.mark_espn_authentication_failed());
+        assert!(!state.mark_espn_authentication_failed());
+        assert!(state.mark_espn_authentication_recovered());
+        assert!(!state.mark_espn_authentication_recovered());
     }
 }

@@ -27,6 +27,12 @@ pub enum RuntimeError {
     MissingEspnScoringPeriod,
 }
 
+impl RuntimeError {
+    pub fn requires_espn_session_refresh(&self) -> bool {
+        matches!(self, Self::Source(SourceError::EspnAuthenticationRequired))
+    }
+}
+
 /// Retrieves and enriches every configured league while keeping API work
 /// outside the core enrichment and evaluation algorithms.
 pub async fn fetch_managed_snapshots(

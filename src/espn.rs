@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use reqwest::{header, Client};
+use reqwest::{header, Client, StatusCode};
 use serde::{Deserialize, Deserializer};
 
 use crate::{
@@ -66,16 +66,17 @@ impl EspnSource {
         }
         let url = format!("{ESPN_FANTASY_BASE}/seasons/{}/segments/0/leagues/{}?view=kona_playercard&scoringPeriodId={scoring_period}", self.season, self.league_id);
         let filter = serde_json::json!({"players": {"filterIds": {"value": player_ids}}});
-        let payload: serde_json::Value = self
+        let response = self
             .http
             .get(url)
             .header(header::COOKIE, self.cookie_header())
             .header("x-fantasy-filter", filter.to_string())
             .send()
-            .await?
-            .error_for_status()?
-            .json()
             .await?;
+        if let Some(error) = source_error_for_status(response.status()) {
+            return Err(error);
+        }
+        let payload: serde_json::Value = response.error_for_status()?.json().await?;
         Ok(payload["players"]
             .as_array()
             .ok_or_else(|| {
@@ -122,6 +123,9 @@ impl FantasySource for EspnSource {
             .to_owned();
         let body = response.text().await?;
 
+        if let Some(error) = source_error_for_status(status) {
+            return Err(error);
+        }
         if !status.is_success() {
             return Err(SourceError::InvalidResponse(format!(
                 "ESPN returned HTTP {status}. Verify ESPN_LEAGUE_ID, ESPN_SWID, and ESPN_S2."
@@ -153,6 +157,11 @@ impl FantasySource for EspnSource {
 
         Ok(normalize(self.league_id, response))
     }
+}
+
+fn source_error_for_status(status: StatusCode) -> Option<SourceError> {
+    matches!(status, StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN)
+        .then_some(SourceError::EspnAuthenticationRequired)
 }
 
 fn normalize(league_id: u64, league: EspnLeague) -> LeagueSnapshot {
@@ -488,5 +497,18 @@ mod tests {
         assert_eq!(position_name(Some(16)), Some("D/ST"));
         assert_eq!(pro_team_name(Some(34)), Some("HOU"));
         assert_eq!(position_name(Some(99)), None);
+    }
+
+    #[test]
+    fn recognizes_expired_espn_sessions() {
+        assert!(matches!(
+            source_error_for_status(StatusCode::UNAUTHORIZED),
+            Some(SourceError::EspnAuthenticationRequired)
+        ));
+        assert!(matches!(
+            source_error_for_status(StatusCode::FORBIDDEN),
+            Some(SourceError::EspnAuthenticationRequired)
+        ));
+        assert!(source_error_for_status(StatusCode::INTERNAL_SERVER_ERROR).is_none());
     }
 }

@@ -39,6 +39,11 @@ roster, and user data are always fetched live. On macOS the default cache is
 `~/Library/Caches/fantasy-football-manager/sleeper_players.json`. Set
 `FANTASY_FOOTBALL_CACHE_DIR` in `.env` to use a different cache directory.
 
+If ESPN rejects an expired or invalid session, the monitor sends one email
+asking you to refresh `ESPN_S2` in `.env`, then sends one recovery email after
+a successful ESPN read. ESPN does not provide a reliable advance-expiry signal,
+so the warning occurs when its next request is rejected.
+
 ## Live read test
 
 Copy `.env.example` to `.env`, then fill in the following local values:
