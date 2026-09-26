@@ -96,10 +96,24 @@ Run the current read-and-evaluate pipeline with `cargo run --bin monitor`.
 
 ## Monitoring Behavior
 
-The monitor evaluates only active starters. It sends an alert for a confirmed
-unavailable status or a zero projection. Bye-week players are covered through
-their zero projection. A missing projection is not treated as zero, avoiding
-an alert before a source has published projections.
+The monitor evaluates active starters for a confirmed unavailable status or a
+zero projection. Bye-week players are covered through their zero projection. A
+missing projection is not treated as zero, avoiding an alert before a source
+has published projections.
+
+It also evaluates each managed roster as a whole. When a valid lineup made
+from the current starters and bench projects at least 1.0 point higher, it
+sends a recommendation that lists the best player for each starting slot. The
+optimizer understands each league's normalized position and FLEX eligibility,
+so it can choose a globally better arrangement instead of making a simple
+one-for-one swap.
+
+Recommendations are lock-in aware. A player whose NFL game is in progress or
+finished remains fixed in their current lineup status and slot. NFL game status
+is retrieved once through a shared read-only source, then applied equally to
+ESPN and Sleeper snapshots. If that game-status request is unavailable, the
+monitor still runs the starter-health checks but deliberately skips lineup
+recommendations for that run.
 
 The monitor keeps local state so an unchanged issue sends one email, not an
 email every 30 minutes. A changed issue sends an updated email; a resolved
@@ -123,9 +137,10 @@ EMAIL_TO=you@example.com
 Use `implicit` TLS for port `465`, or `starttls` for port `587`. The monitor
 sends no email when it finds no alerts.
 
-Repeated runs email only newly detected or changed alerts. Active alerts are
-stored locally in `~/Library/Caches/fantasy-football-manager/active_alerts.json`
-on macOS; deleting that file resets the alert history.
+Repeated runs email only newly detected or changed alerts, including changed
+lineup recommendations. Active alerts are stored locally in
+`~/Library/Caches/fantasy-football-manager/active_alerts.json` on macOS;
+deleting that file resets the alert history.
 
 ESPN session-health state is stored beside it in `monitor_health.json`.
 Deleting that file resets only the one-time expired-session and recovery-email

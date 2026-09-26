@@ -62,7 +62,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     if new_alerts.is_empty() {
         state.replace_active(&alerts);
         state.save()?;
-        println!("No new actionable starter alerts.");
+        println!("No new actionable lineup alerts.");
         return Ok(());
     }
 
