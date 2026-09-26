@@ -13,7 +13,16 @@ pub struct LeagueSnapshot {
     pub league_name: String,
     #[serde(default)]
     pub scoring_period: Option<u8>,
+    #[serde(default)]
+    pub lineup_slots: Vec<LineupSlot>,
     pub teams: Vec<FantasyTeam>,
+}
+
+/// One starting slot and the player positions it accepts.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+pub struct LineupSlot {
+    pub name: String,
+    pub eligible_positions: Vec<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -30,6 +39,10 @@ pub struct RosteredPlayer {
     pub provider_player_id: String,
     #[serde(default)]
     pub espn_player_id: Option<String>,
+    #[serde(default)]
+    pub eligible_positions: Vec<String>,
+    #[serde(default)]
+    pub is_locked: bool,
     pub full_name: String,
     pub position: Option<String>,
     pub nfl_team: Option<String>,

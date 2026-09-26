@@ -111,6 +111,8 @@ mod tests {
         RosteredPlayer {
             provider_player_id: id.to_owned(),
             espn_player_id: None,
+            eligible_positions: vec!["WR".to_owned()],
+            is_locked: false,
             full_name: format!("Player {id}"),
             position: Some("WR".to_owned()),
             nfl_team: Some("BUF".to_owned()),
@@ -139,6 +141,7 @@ mod tests {
             league_id: "league-1".to_owned(),
             league_name: "Test league".to_owned(),
             scoring_period: None,
+            lineup_slots: Vec::new(),
             teams: vec![FantasyTeam {
                 team_id: "team-1".to_owned(),
                 team_name: "My team".to_owned(),

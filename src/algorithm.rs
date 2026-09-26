@@ -53,6 +53,7 @@ mod tests {
             league_id: "sleeper-league".to_owned(),
             league_name: "Sleeper league".to_owned(),
             scoring_period: None,
+            lineup_slots: Vec::new(),
             teams: vec![FantasyTeam {
                 team_id: "team".to_owned(),
                 team_name: "My team".to_owned(),
@@ -61,6 +62,8 @@ mod tests {
                 players: vec![RosteredPlayer {
                     provider_player_id: "sleeper-1".to_owned(),
                     espn_player_id: Some("espn-1".to_owned()),
+                    eligible_positions: vec!["WR".to_owned()],
+                    is_locked: false,
                     full_name: "Player One".to_owned(),
                     position: Some("WR".to_owned()),
                     nfl_team: Some("BUF".to_owned()),

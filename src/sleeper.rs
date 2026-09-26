@@ -10,8 +10,8 @@ use reqwest::Client;
 use serde::{Deserialize, Deserializer};
 
 use crate::{
-    FantasySource, FantasyTeam, LeagueSnapshot, LineupStatus, PlayerAvailability, Provider,
-    RosteredPlayer, SourceError,
+    FantasySource, FantasyTeam, LeagueSnapshot, LineupSlot, LineupStatus, PlayerAvailability,
+    Provider, RosteredPlayer, SourceError,
 };
 
 const SLEEPER_API_BASE: &str = "https://api.sleeper.app/v1";
@@ -149,6 +149,7 @@ fn normalize(
     rosters: Vec<SleeperRoster>,
     players: HashMap<String, SleeperPlayer>,
 ) -> LeagueSnapshot {
+    let lineup_slots = normalize_lineup_slots(&league.roster_positions);
     let owners: HashMap<_, _> = users
         .into_iter()
         .map(|user| {
@@ -164,6 +165,18 @@ fn normalize(
     let teams = rosters
         .into_iter()
         .map(|roster| {
+            let starter_slots: HashMap<String, String> = roster
+                .starters
+                .iter()
+                .enumerate()
+                .filter_map(|(index, player_id)| {
+                    league
+                        .roster_positions
+                        .get(index)
+                        .and_then(|slot| lineup_slot_definition(slot))
+                        .map(|slot| (player_id.clone(), slot.name))
+                })
+                .collect();
             let starters: std::collections::HashSet<String> = roster.starters.into_iter().collect();
             let reserves: std::collections::HashSet<String> = roster.reserve.into_iter().collect();
             let owner_name = roster
@@ -190,15 +203,22 @@ fn normalize(
                     };
 
                     RosteredPlayer {
-                        provider_player_id: player_id,
+                        provider_player_id: player_id.clone(),
                         espn_player_id: player.and_then(|value| value.espn_id.clone()),
+                        eligible_positions: player
+                            .map(|value| value.eligible_positions())
+                            .unwrap_or_default(),
+                        is_locked: false,
                         full_name: player
                             .and_then(|value| value.full_name.clone())
                             .unwrap_or_else(|| "Unknown player".to_owned()),
                         position: player.and_then(|value| value.position.clone()),
                         nfl_team: player.and_then(|value| value.team.clone()),
                         lineup_slot: match lineup_status {
-                            LineupStatus::Starter => "STARTER".to_owned(),
+                            LineupStatus::Starter => starter_slots
+                                .get(&player_id)
+                                .cloned()
+                                .unwrap_or_else(|| "STARTER".to_owned()),
                             LineupStatus::Bench => "BENCH".to_owned(),
                             LineupStatus::Reserve => "RESERVE".to_owned(),
                         },
@@ -230,13 +250,46 @@ fn normalize(
             .name
             .unwrap_or_else(|| format!("Sleeper league {league_id}")),
         scoring_period: None,
+        lineup_slots,
         teams,
     }
+}
+
+fn normalize_lineup_slots(positions: &[String]) -> Vec<LineupSlot> {
+    positions
+        .iter()
+        .filter_map(|position| lineup_slot_definition(position))
+        .collect()
+}
+
+fn lineup_slot_definition(position: &str) -> Option<LineupSlot> {
+    let (name, eligible_positions) = match position {
+        "QB" => ("QB", &["QB", "TQB"][..]),
+        "RB" => ("RB", &["RB"][..]),
+        "WR" => ("WR", &["WR"][..]),
+        "TE" => ("TE", &["TE"][..]),
+        "K" => ("K", &["K"][..]),
+        "DEF" | "D/ST" => ("D/ST", &["D/ST"][..]),
+        "FLEX" => ("FLEX", &["RB", "WR", "TE"][..]),
+        "SUPER_FLEX" | "SUPERFLEX" => ("SUPERFLEX", &["QB", "TQB", "RB", "WR", "TE"][..]),
+        "REC_FLEX" => ("REC_FLEX", &["WR", "TE"][..]),
+        "WRRB_FLEX" => ("WRRB_FLEX", &["RB", "WR"][..]),
+        _ => return None,
+    };
+    Some(LineupSlot {
+        name: name.to_owned(),
+        eligible_positions: eligible_positions
+            .iter()
+            .map(|value| (*value).to_owned())
+            .collect(),
+    })
 }
 
 #[derive(Deserialize)]
 struct SleeperLeague {
     name: Option<String>,
+    #[serde(default, deserialize_with = "null_to_default")]
+    roster_positions: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -270,8 +323,34 @@ struct SleeperPlayer {
     espn_id: Option<String>,
     full_name: Option<String>,
     position: Option<String>,
+    #[serde(default, deserialize_with = "null_to_default")]
+    fantasy_positions: Vec<String>,
     team: Option<String>,
     injury_status: Option<String>,
+}
+
+impl SleeperPlayer {
+    fn eligible_positions(&self) -> Vec<String> {
+        if self.fantasy_positions.is_empty() {
+            return self
+                .position
+                .as_deref()
+                .map(split_positions)
+                .unwrap_or_default();
+        }
+        self.fantasy_positions
+            .iter()
+            .flat_map(|position| split_positions(position))
+            .collect()
+    }
+}
+
+fn split_positions(position: &str) -> Vec<String> {
+    position
+        .replace("DEF", "D/ST")
+        .split('/')
+        .map(str::to_owned)
+        .collect()
 }
 
 fn null_to_default<'de, D, T>(deserializer: D) -> Result<T, D::Error>
@@ -304,6 +383,7 @@ mod tests {
             "league-1",
             SleeperLeague {
                 name: Some("Sunday league".to_owned()),
+                roster_positions: vec!["QB".to_owned(), "FLEX".to_owned(), "BN".to_owned()],
             },
             vec![SleeperUser {
                 user_id: "owner-1".to_owned(),
@@ -327,6 +407,7 @@ mod tests {
                         espn_id: Some("1001".to_owned()),
                         full_name: Some("Starter Player".to_owned()),
                         position: Some("WR".to_owned()),
+                        fantasy_positions: vec!["WR".to_owned()],
                         team: Some("NYJ".to_owned()),
                         injury_status: None,
                     },
@@ -337,6 +418,7 @@ mod tests {
                         espn_id: None,
                         full_name: Some("Reserve Player".to_owned()),
                         position: Some("RB".to_owned()),
+                        fantasy_positions: vec!["RB".to_owned()],
                         team: Some("NE".to_owned()),
                         injury_status: Some("Questionable".to_owned()),
                     },

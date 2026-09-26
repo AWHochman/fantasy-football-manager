@@ -21,8 +21,8 @@ pub use error::SourceError;
 pub use espn::EspnSource;
 pub use evaluator::{evaluate_team, AlertReason, EvaluationError, LineupAlert};
 pub use model::{
-    FantasyTeam, LeagueSnapshot, LineupStatus, PlayerAvailability, PlayerEnrichment, Provider,
-    RosteredPlayer,
+    FantasyTeam, LeagueSnapshot, LineupSlot, LineupStatus, PlayerAvailability, PlayerEnrichment,
+    Provider, RosteredPlayer,
 };
 pub use notifier::{format_alert_email, AlertNotifier, EmailNotifier, NotifierError};
 pub use runtime::{fetch_managed_snapshots, ManagedSnapshot, RuntimeError};

@@ -1,10 +1,12 @@
+use std::collections::HashMap;
+
 use async_trait::async_trait;
 use reqwest::{header, Client, StatusCode};
 use serde::{Deserialize, Deserializer};
 
 use crate::{
-    FantasySource, FantasyTeam, LeagueSnapshot, LineupStatus, PlayerAvailability, PlayerEnrichment,
-    Provider, RosteredPlayer, SourceError,
+    FantasySource, FantasyTeam, LeagueSnapshot, LineupSlot, LineupStatus, PlayerAvailability,
+    PlayerEnrichment, Provider, RosteredPlayer, SourceError,
 };
 
 // This is the read endpoint used by the `espn-api` Python library. ESPN does
@@ -165,6 +167,7 @@ fn source_error_for_status(status: StatusCode) -> Option<SourceError> {
 }
 
 fn normalize(league_id: u64, league: EspnLeague) -> LeagueSnapshot {
+    let lineup_slots = normalize_lineup_slots(&league.settings.roster_settings.lineup_slot_counts);
     let league_name = league
         .settings
         .name
@@ -193,6 +196,10 @@ fn normalize(league_id: u64, league: EspnLeague) -> LeagueSnapshot {
                     RosteredPlayer {
                         provider_player_id: entry.player_id.to_string(),
                         espn_player_id: Some(entry.player_id.to_string()),
+                        eligible_positions: eligible_positions(
+                            entry.player_pool_entry.player.default_position_id,
+                        ),
+                        is_locked: false,
                         full_name: entry
                             .player_pool_entry
                             .player
@@ -221,8 +228,53 @@ fn normalize(league_id: u64, league: EspnLeague) -> LeagueSnapshot {
         league_id: league_id.to_string(),
         league_name,
         scoring_period: league.scoring_period_id,
+        lineup_slots,
         teams,
     }
+}
+
+fn normalize_lineup_slots(counts: &HashMap<String, i16>) -> Vec<LineupSlot> {
+    let mut slots = Vec::new();
+    for (slot_id, count) in counts {
+        let Ok(slot_id) = slot_id.parse::<u8>() else {
+            continue;
+        };
+        let Some(slot) = lineup_slot_definition(slot_id) else {
+            continue;
+        };
+        for _ in 0..(*count).max(0) {
+            slots.push(slot.clone());
+        }
+    }
+    slots.sort_by(|left, right| left.name.cmp(&right.name));
+    slots
+}
+
+fn lineup_slot_definition(slot_id: u8) -> Option<LineupSlot> {
+    let (name, eligible_positions) = match slot_id {
+        0 => ("QB", &["QB", "TQB"][..]),
+        2 => ("RB", &["RB"][..]),
+        4 => ("WR", &["WR"][..]),
+        6 => ("TE", &["TE"][..]),
+        7 => ("SUPERFLEX", &["QB", "TQB", "RB", "WR", "TE"][..]),
+        16 => ("D/ST", &["D/ST"][..]),
+        17 => ("K", &["K"][..]),
+        23 => ("FLEX", &["RB", "WR", "TE"][..]),
+        _ => return None,
+    };
+    Some(LineupSlot {
+        name: name.to_owned(),
+        eligible_positions: eligible_positions
+            .iter()
+            .map(|value| (*value).to_owned())
+            .collect(),
+    })
+}
+
+fn eligible_positions(position_id: Option<u8>) -> Vec<String> {
+    position_name(position_id)
+        .map(|position| position.split('/').map(str::to_owned).collect())
+        .unwrap_or_default()
 }
 
 fn lineup_status(slot_id: u8) -> LineupStatus {
@@ -367,8 +419,18 @@ struct EspnLeague {
 }
 
 #[derive(Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct EspnSettings {
     name: Option<String>,
+    #[serde(default, deserialize_with = "null_to_default")]
+    roster_settings: EspnRosterSettings,
+}
+
+#[derive(Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct EspnRosterSettings {
+    #[serde(default, deserialize_with = "null_to_default")]
+    lineup_slot_counts: HashMap<String, i16>,
 }
 
 #[derive(Deserialize)]
