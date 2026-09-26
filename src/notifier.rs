@@ -7,7 +7,7 @@ use lettre::{
 };
 use thiserror::Error;
 
-use crate::{AlertReason, LineupAlert};
+use crate::{AlertReason, LineupAlert, MonitorAlert};
 
 #[derive(Debug, Error)]
 pub enum NotifierError {
@@ -27,7 +27,7 @@ pub enum NotifierError {
 
 #[async_trait]
 pub trait AlertNotifier: Send + Sync {
-    async fn notify(&self, alerts: &[LineupAlert]) -> Result<(), NotifierError>;
+    async fn notify(&self, alerts: &[MonitorAlert]) -> Result<(), NotifierError>;
 }
 
 pub struct EmailNotifier {
@@ -102,7 +102,7 @@ The next scheduled check will confirm that monitoring has recovered."
 
 #[async_trait]
 impl AlertNotifier for EmailNotifier {
-    async fn notify(&self, alerts: &[LineupAlert]) -> Result<(), NotifierError> {
+    async fn notify(&self, alerts: &[MonitorAlert]) -> Result<(), NotifierError> {
         if alerts.is_empty() {
             return Ok(());
         }
@@ -110,30 +110,52 @@ impl AlertNotifier for EmailNotifier {
         let email = Message::builder()
             .from(self.config.from.clone())
             .to(self.config.to.clone())
-            .subject(format!("Fantasy lineup alert: {} starter(s)", alerts.len()))
+            .subject(format!("Fantasy lineup alert: {} item(s)", alerts.len()))
             .body(format_alert_email(alerts))?;
         self.send(email).await
     }
 }
 
-pub fn format_alert_email(alerts: &[LineupAlert]) -> String {
+pub fn format_alert_email(alerts: &[MonitorAlert]) -> String {
     let mut body = String::from("Your fantasy lineup needs attention:\n");
     for alert in alerts {
-        body.push_str(&format!(
-            "\n- {} / {}: {} ({}) [{}]\n",
-            alert.league_name,
-            alert.team_name,
-            alert.player_name,
-            alert.position.as_deref().unwrap_or("unknown position"),
-            alert
-                .reasons
-                .iter()
-                .map(alert_reason_name)
-                .collect::<Vec<_>>()
-                .join(", ")
-        ));
+        match alert {
+            MonitorAlert::Starter(alert) => format_starter_alert(&mut body, alert),
+            MonitorAlert::RecommendedLineup(recommendation) => {
+                body.push_str(&format!(
+                    "\n- {} / {}: a valid unlocked lineup projects {:.1} points higher ({:.1} to {:.1}).\n",
+                    recommendation.league_name,
+                    recommendation.team_name,
+                    recommendation.projected_gain,
+                    recommendation.current_projected_points,
+                    recommendation.optimized_projected_points,
+                ));
+                for assignment in &recommendation.assignments {
+                    body.push_str(&format!(
+                        "  {}: {} ({:.1})\n",
+                        assignment.slot_name, assignment.player_name, assignment.projected_points
+                    ));
+                }
+            }
+        }
     }
     body
+}
+
+fn format_starter_alert(body: &mut String, alert: &LineupAlert) {
+    body.push_str(&format!(
+        "\n- {} / {}: {} ({}) [{}]\n",
+        alert.league_name,
+        alert.team_name,
+        alert.player_name,
+        alert.position.as_deref().unwrap_or("unknown position"),
+        alert
+            .reasons
+            .iter()
+            .map(alert_reason_name)
+            .collect::<Vec<_>>()
+            .join(", ")
+    ));
 }
 
 struct EmailConfig {
@@ -196,13 +218,13 @@ fn alert_reason_name(reason: &AlertReason) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use crate::{LineupAlert, Provider};
+    use crate::{LineupAlert, MonitorAlert, Provider};
 
     use super::*;
 
     #[test]
     fn formats_actionable_alerts() {
-        let body = format_alert_email(&[LineupAlert {
+        let body = format_alert_email(&[MonitorAlert::Starter(LineupAlert {
             provider: Provider::Espn,
             league_id: "1".to_owned(),
             league_name: "Sunday League".to_owned(),
@@ -215,7 +237,7 @@ mod tests {
                 AlertReason::ConfirmedUnavailable,
                 AlertReason::ZeroProjection,
             ],
-        }]);
+        })]);
 
         assert!(body.contains("Sunday League / My Team"));
         assert!(body.contains("Player One (WR) [unavailable, zero projection]"));

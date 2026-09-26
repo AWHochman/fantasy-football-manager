@@ -2,7 +2,7 @@ use std::{collections::HashSet, env, fs, path::PathBuf};
 
 use thiserror::Error;
 
-use crate::{AlertReason, LineupAlert, Provider};
+use crate::{AlertReason, MonitorAlert, Provider};
 
 #[derive(Debug, Error)]
 pub enum AlertStateError {
@@ -68,7 +68,7 @@ impl AlertState {
         Self { path, active }
     }
 
-    pub fn new_alerts(&self, alerts: &[LineupAlert]) -> Vec<LineupAlert> {
+    pub fn new_alerts(&self, alerts: &[MonitorAlert]) -> Vec<MonitorAlert> {
         alerts
             .iter()
             .filter(|alert| !self.active.contains(&AlertFingerprint::from(*alert)))
@@ -76,7 +76,7 @@ impl AlertState {
             .collect()
     }
 
-    pub fn replace_active(&mut self, alerts: &[LineupAlert]) {
+    pub fn replace_active(&mut self, alerts: &[MonitorAlert]) {
         self.active = alerts.iter().map(AlertFingerprint::from).collect();
     }
 
@@ -125,25 +125,50 @@ fn home_cache_directory(home: PathBuf) -> PathBuf {
     home.join(".cache")
 }
 
-#[derive(Clone, Debug, Eq, Hash, PartialEq, serde::Deserialize, serde::Serialize)]
-struct AlertFingerprint {
-    provider: Provider,
-    league_id: String,
-    team_id: String,
-    player_id: String,
-    reasons: Vec<AlertReason>,
-}
-
-impl From<&LineupAlert> for AlertFingerprint {
-    fn from(alert: &LineupAlert) -> Self {
-        Self {
-            provider: alert.provider,
-            league_id: alert.league_id.clone(),
-            team_id: alert.team_id.clone(),
-            player_id: alert.player_id.clone(),
-            reasons: alert.reasons.clone(),
+impl From<&MonitorAlert> for AlertFingerprint {
+    fn from(alert: &MonitorAlert) -> Self {
+        match alert {
+            MonitorAlert::Starter(alert) => Self::Starter {
+                provider: alert.provider,
+                league_id: alert.league_id.clone(),
+                team_id: alert.team_id.clone(),
+                player_id: alert.player_id.clone(),
+                reasons: alert.reasons.clone(),
+            },
+            MonitorAlert::RecommendedLineup(recommendation) => Self::RecommendedLineup {
+                provider: recommendation.provider,
+                league_id: recommendation.league_id.clone(),
+                team_id: recommendation.team_id.clone(),
+                current_projected_points: recommendation.current_projected_points.to_bits(),
+                optimized_projected_points: recommendation.optimized_projected_points.to_bits(),
+                assignments: recommendation
+                    .assignments
+                    .iter()
+                    .map(|assignment| (assignment.slot_name.clone(), assignment.player_id.clone()))
+                    .collect(),
+            },
         }
     }
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq, serde::Deserialize, serde::Serialize)]
+#[serde(untagged)]
+enum AlertFingerprint {
+    Starter {
+        provider: Provider,
+        league_id: String,
+        team_id: String,
+        player_id: String,
+        reasons: Vec<AlertReason>,
+    },
+    RecommendedLineup {
+        provider: Provider,
+        league_id: String,
+        team_id: String,
+        current_projected_points: u64,
+        optimized_projected_points: u64,
+        assignments: Vec<(String, String)>,
+    },
 }
 
 #[derive(Default, serde::Deserialize, serde::Serialize)]
@@ -155,9 +180,10 @@ struct MonitorHealthData {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{LineupAlert, LineupAssignment, LineupRecommendation};
 
-    fn alert(reasons: Vec<AlertReason>) -> LineupAlert {
-        LineupAlert {
+    fn alert(reasons: Vec<AlertReason>) -> MonitorAlert {
+        MonitorAlert::Starter(LineupAlert {
             provider: Provider::Sleeper,
             league_id: "league".to_owned(),
             league_name: "League".to_owned(),
@@ -167,7 +193,26 @@ mod tests {
             player_name: "Player".to_owned(),
             position: Some("WR".to_owned()),
             reasons,
-        }
+        })
+    }
+
+    fn recommendation(projected_gain: f64) -> MonitorAlert {
+        MonitorAlert::RecommendedLineup(LineupRecommendation {
+            provider: Provider::Sleeper,
+            league_id: "league".to_owned(),
+            league_name: "League".to_owned(),
+            team_id: "team".to_owned(),
+            team_name: "Team".to_owned(),
+            current_projected_points: 100.0,
+            optimized_projected_points: 100.0 + projected_gain,
+            projected_gain,
+            assignments: vec![LineupAssignment {
+                slot_name: "WR".to_owned(),
+                player_id: "player".to_owned(),
+                player_name: "Player".to_owned(),
+                projected_points: 15.0,
+            }],
+        })
     }
 
     #[test]
@@ -196,6 +241,18 @@ mod tests {
 
         state.replace_active(&[]);
         assert_eq!(state.new_alerts(&[current]).len(), 1);
+    }
+
+    #[test]
+    fn returns_a_recommendation_again_when_its_projections_change() {
+        let current = recommendation(2.0);
+        let state = AlertState {
+            path: PathBuf::new(),
+            active: HashSet::from([AlertFingerprint::from(&current)]),
+        };
+
+        assert!(state.new_alerts(std::slice::from_ref(&current)).is_empty());
+        assert_eq!(state.new_alerts(&[recommendation(3.0)]).len(), 1);
     }
 
     #[test]

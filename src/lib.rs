@@ -3,6 +3,7 @@
 //! The crate intentionally has no methods for lineup changes, transactions,
 //! waivers, trades, or any other provider mutation.
 
+mod alert;
 mod algorithm;
 mod config;
 mod error;
@@ -17,6 +18,7 @@ mod sleeper;
 mod source;
 mod state;
 
+pub use alert::MonitorAlert;
 pub use algorithm::merge_player_enrichment;
 pub use config::{AppConfig, ConfigError, ManagedTeam};
 pub use error::SourceError;

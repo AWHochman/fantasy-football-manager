@@ -1,8 +1,8 @@
 use std::error::Error;
 
 use fantasy_football_manager::{
-    evaluate_team, fetch_managed_snapshots, AlertNotifier, AlertState, AppConfig, EmailNotifier,
-    MonitorHealthState,
+    evaluate_team, fetch_managed_snapshots, recommend_optimal_lineup, AlertNotifier, AlertState,
+    AppConfig, EmailNotifier, MonitorAlert, MonitorHealthState, DEFAULT_MINIMUM_PROJECTED_GAIN,
 };
 
 #[tokio::main(flavor = "current_thread")]
@@ -37,7 +37,24 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let mut alerts = Vec::new();
 
     for managed in snapshots {
-        alerts.extend(evaluate_team(&managed.snapshot, &managed.team.team_id)?);
+        alerts.extend(
+            evaluate_team(&managed.snapshot, &managed.team.team_id)?
+                .into_iter()
+                .map(MonitorAlert::Starter),
+        );
+        if managed.locks_known {
+            if let Some(recommendation) = recommend_optimal_lineup(
+                &managed.snapshot,
+                &managed.team.team_id,
+                DEFAULT_MINIMUM_PROJECTED_GAIN,
+            )? {
+                alerts.push(MonitorAlert::RecommendedLineup(recommendation));
+            }
+        } else {
+            println!(
+                "Skipped projected-lineup recommendations because NFL game locks were unavailable."
+            );
+        }
     }
 
     let mut state = AlertState::load();
