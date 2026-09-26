@@ -10,6 +10,7 @@ mod espn;
 mod evaluator;
 mod model;
 mod notifier;
+mod optimizer;
 mod runtime;
 mod sleeper;
 mod source;
@@ -25,6 +26,10 @@ pub use model::{
     Provider, RosteredPlayer,
 };
 pub use notifier::{format_alert_email, AlertNotifier, EmailNotifier, NotifierError};
+pub use optimizer::{
+    recommend_optimal_lineup, LineupAssignment, LineupRecommendation, OptimizationError,
+    DEFAULT_MINIMUM_PROJECTED_GAIN,
+};
 pub use runtime::{fetch_managed_snapshots, ManagedSnapshot, RuntimeError};
 pub use sleeper::SleeperSource;
 pub use source::FantasySource;
