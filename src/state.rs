@@ -178,9 +178,9 @@ mod tests {
             active: HashSet::new(),
         };
 
-        assert_eq!(state.new_alerts(&[current.clone()]).len(), 1);
-        state.replace_active(&[current.clone()]);
-        assert!(state.new_alerts(&[current.clone()]).is_empty());
+        assert_eq!(state.new_alerts(std::slice::from_ref(&current)).len(), 1);
+        state.replace_active(std::slice::from_ref(&current));
+        assert!(state.new_alerts(std::slice::from_ref(&current)).is_empty());
 
         let changed = alert(vec![AlertReason::ConfirmedUnavailable]);
         assert_eq!(state.new_alerts(&[changed]).len(), 1);

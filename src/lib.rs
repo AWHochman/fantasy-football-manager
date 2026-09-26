@@ -9,6 +9,7 @@ mod error;
 mod espn;
 mod evaluator;
 mod model;
+mod nfl;
 mod notifier;
 mod optimizer;
 mod runtime;
@@ -25,6 +26,7 @@ pub use model::{
     FantasyTeam, LeagueSnapshot, LineupSlot, LineupStatus, PlayerAvailability, PlayerEnrichment,
     Provider, RosteredPlayer,
 };
+pub use nfl::NflGameStatusSource;
 pub use notifier::{format_alert_email, AlertNotifier, EmailNotifier, NotifierError};
 pub use optimizer::{
     recommend_optimal_lineup, LineupAssignment, LineupRecommendation, OptimizationError,

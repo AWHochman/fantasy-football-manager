@@ -4,13 +4,16 @@ use thiserror::Error;
 
 use crate::{
     merge_player_enrichment, AppConfig, ConfigError, EspnSource, FantasySource, LeagueSnapshot,
-    ManagedTeam, PlayerEnrichment, Provider, SleeperSource, SourceError,
+    ManagedTeam, NflGameStatusSource, PlayerEnrichment, Provider, SleeperSource, SourceError,
 };
 
 #[derive(Clone, Debug)]
 pub struct ManagedSnapshot {
     pub team: ManagedTeam,
     pub snapshot: LeagueSnapshot,
+    /// False means game state could not be retrieved, so optimizer alerts must
+    /// be skipped rather than treating every player as movable.
+    pub locks_known: bool,
 }
 
 #[derive(Debug, Error)]
@@ -59,10 +62,12 @@ pub async fn fetch_managed_snapshots(
         snapshots.push(ManagedSnapshot {
             team: team.clone(),
             snapshot,
+            locks_known: false,
         });
     }
 
-    enrich_snapshots(snapshots, espn.as_ref()).await
+    let snapshots = enrich_snapshots(snapshots, espn.as_ref()).await?;
+    Ok(apply_game_locks(snapshots).await)
 }
 
 async fn enrich_snapshots(
@@ -128,8 +133,31 @@ async fn enrich_snapshots(
                 &sleeper_to_espn,
             ),
             team: managed.team,
+            locks_known: managed.locks_known,
         })
         .collect())
+}
+
+async fn apply_game_locks(snapshots: Vec<ManagedSnapshot>) -> Vec<ManagedSnapshot> {
+    let Ok(locked_teams) = NflGameStatusSource::new().fetch_locked_teams().await else {
+        return snapshots;
+    };
+
+    snapshots
+        .into_iter()
+        .map(|mut managed| {
+            for team in &mut managed.snapshot.teams {
+                for player in &mut team.players {
+                    player.is_locked = player
+                        .nfl_team
+                        .as_deref()
+                        .is_some_and(|team| locked_teams.contains(team));
+                }
+            }
+            managed.locks_known = true;
+            managed
+        })
+        .collect()
 }
 
 struct EspnSession {
