@@ -44,55 +44,33 @@ a successful ESPN read. ESPN does not provide a reliable advance-expiry signal,
 so the warning occurs when its next request is rejected. Updating `.env` is
 enough; the next scheduled run reads the new value.
 
-## Live read test
+## Monitor Configuration
 
-Copy `.env.example` to `.env`, then fill in the following local values:
-
-```dotenv
-SLEEPER_LEAGUE_ID=your_sleeper_league_id
-ESPN_LEAGUE_ID=your_espn_league_id
-ESPN_SEASON=2026
-ESPN_SWID={your_swid_cookie}
-ESPN_S2=your_espn_s2_cookie
-```
-
-`SLEEPER_LEAGUE_ID` is the numeric identifier in the Sleeper league URL.
-`ESPN_LEAGUE_ID` is the `leagueId` in the ESPN Fantasy league URL. To find the
-two ESPN values, sign in at `fantasy.espn.com`, open browser developer tools,
-and find the `SWID` and `espn_s2` cookies under the `fantasy.espn.com` site
-storage. Treat both values like a password and never paste them into chat,
-source code, or Git.
-
-Run the read-only test with:
-
-```sh
-cargo run --bin fetch_leagues
-```
-
-It requests only the configured sources and prints normalized roster JSON. An
-ESPN authorization failure usually means `ESPN_S2` needs to be refreshed.
-
-`ESPN_SCORING_PERIOD` and `ESPN_PLAYER_IDS` in `.env.example` are only for the
-optional ESPN player-card debugging command:
-
-```sh
-cargo run --bin fetch_espn_players
-```
-
-## Managed Teams
-
-Configure every team you want monitored through `MANAGED_TEAMS_JSON` in your
-local `.env` file. For example:
+Copy `.env.example` to `.env`, then configure every team through
+`MANAGED_TEAMS_JSON`. For example:
 
 ```dotenv
 MANAGED_TEAMS_JSON='[{"provider":"Sleeper","league_id":"123","team_id":"3"},{"provider":"Espn","league_id":"456","team_id":"8"}]'
 ```
 
-For Sleeper, `team_id` is its `roster_id`. For ESPN, it is the team `id` from
-the league response. Multiple ESPN entries share the same `ESPN_SWID` and
-`ESPN_S2` session values.
+For Sleeper, `league_id` is the numeric identifier in the league URL and
+`team_id` is its `roster_id`. For ESPN, `league_id` is the `leagueId` in the
+Fantasy league URL and `team_id` is the ESPN team `id` from the league
+response. Multiple ESPN entries share one `ESPN_SWID` and `ESPN_S2` session.
+
+Set `ESPN_SEASON`, `ESPN_SWID`, and `ESPN_S2` when at least one managed team
+uses ESPN. Sign in at `fantasy.espn.com`, open browser developer tools, and
+find the `SWID` and `espn_s2` cookies under the `fantasy.espn.com` site
+storage. Treat both values like a password and never paste them into chat,
+source code, or Git.
 
 Run the current read-and-evaluate pipeline with `cargo run --bin monitor`.
+An ESPN authorization failure usually means `ESPN_S2` needs to be refreshed.
+
+To print the normalized snapshots for every managed team without sending email,
+run `cargo run --bin fetch_leagues`. It uses the same configuration as the
+monitor. `fetch_espn_players` remains an optional developer player-card probe
+that requires temporary one-off environment variables when used.
 
 ## Monitoring Behavior
 

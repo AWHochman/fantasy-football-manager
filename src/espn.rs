@@ -191,7 +191,7 @@ impl FantasySource for EspnSource {
         }
         if !status.is_success() {
             return Err(SourceError::InvalidResponse(format!(
-                "ESPN returned HTTP {status}. Verify ESPN_LEAGUE_ID, ESPN_SWID, and ESPN_S2."
+                "ESPN returned HTTP {status}. Verify the managed ESPN league_id, ESPN_SWID, and ESPN_S2."
             )));
         }
 

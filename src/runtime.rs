@@ -31,7 +31,7 @@ pub enum RuntimeError {
     Source(#[from] SourceError),
     #[error("{0} is required for an ESPN team")]
     MissingEspnSetting(&'static str),
-    #[error("ESPN_LEAGUE_ID must be numeric: {0}")]
+    #[error("an ESPN league_id in MANAGED_TEAMS_JSON must be numeric: {0}")]
     InvalidEspnLeagueId(#[from] std::num::ParseIntError),
     #[error("ESPN did not provide a current scoring period")]
     MissingEspnScoringPeriod,
