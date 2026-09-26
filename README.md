@@ -79,6 +79,11 @@ zero projection. Bye-week players are covered through their zero projection. A
 missing projection is not treated as zero, avoiding an alert before a source
 has published projections.
 
+For lineup recommendations, an unchanged starter without a projection stays
+fixed in its current slot. The monitor can still recommend an improvement among
+the remaining players, and labels the result as a comparison of known projected
+points rather than treating the missing value as zero.
+
 It also evaluates each managed roster as a whole. When a valid lineup made
 from the current starters and bench projects at least 1.0 point higher, it
 sends a recommendation that lists the best player for each starting slot. The

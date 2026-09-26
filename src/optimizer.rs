@@ -12,7 +12,7 @@ pub struct LineupAssignment {
     pub slot_name: String,
     pub player_id: String,
     pub player_name: String,
-    pub projected_points: f64,
+    pub projected_points: Option<f64>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -25,6 +25,9 @@ pub struct LineupRecommendation {
     pub current_projected_points: f64,
     pub optimized_projected_points: f64,
     pub projected_gain: f64,
+    /// False when unchanged starters have unavailable projections. The gain is
+    /// still valid because those players remain fixed in their current slots.
+    pub projections_complete: bool,
     /// The earliest kickoff among players whose lineup status changes.
     pub action_by: Option<DateTime<Utc>>,
     pub assignments: Vec<LineupAssignment>,
@@ -81,20 +84,15 @@ pub fn recommend_optimal_lineup(
         });
     }
 
-    let current_projected_points = team
-        .players
-        .iter()
-        .filter(|player| player.lineup_status == LineupStatus::Starter)
-        .map(|player| player.availability.projected_points)
-        .collect::<Option<Vec<_>>>()
-        .map(|points| points.into_iter().sum::<f64>());
-    let Some(current_projected_points) = current_projected_points else {
-        return Ok(None);
-    };
+    let (current_projected_points, projections_complete) = starter_projection_summary(team);
 
     let mut remaining_slots = snapshot.lineup_slots.clone();
     let mut locked_assignments = Vec::new();
-    for player in team.players.iter().filter(|player| player.is_locked) {
+    for player in team.players.iter().filter(|player| {
+        player.is_locked
+            || (player.lineup_status == LineupStatus::Starter
+                && player.availability.projected_points.is_none())
+    }) {
         if player.lineup_status != LineupStatus::Starter {
             continue;
         }
@@ -106,14 +104,11 @@ pub fn recommend_optimal_lineup(
                 slot_name: player.lineup_slot.clone(),
             })?;
         remaining_slots.remove(slot_index);
-        let Some(projected_points) = player.availability.projected_points else {
-            return Ok(None);
-        };
         locked_assignments.push(LineupAssignment {
             slot_name: player.lineup_slot.clone(),
             player_id: player.provider_player_id.clone(),
             player_name: player.full_name.clone(),
-            projected_points,
+            projected_points: player.availability.projected_points,
         });
     }
 
@@ -144,13 +139,13 @@ pub fn recommend_optimal_lineup(
                 slot_name: remaining_slots[index].name.clone(),
                 player_id: player.provider_player_id.clone(),
                 player_name: player.full_name.clone(),
-                projected_points: player.availability.projected_points.unwrap_or_default(),
+                projected_points: player.availability.projected_points,
             }
         },
     ));
     let optimized_projected_points = assignments
         .iter()
-        .map(|assignment| assignment.projected_points)
+        .filter_map(|assignment| assignment.projected_points)
         .sum();
     let projected_gain = optimized_projected_points - current_projected_points;
     let current_player_ids: HashSet<_> = team
@@ -176,6 +171,7 @@ pub fn recommend_optimal_lineup(
         current_projected_points,
         optimized_projected_points,
         projected_gain,
+        projections_complete,
         action_by: recommendation_deadline(&team.players, &assignments, None),
         assignments,
     }))
@@ -191,9 +187,7 @@ pub fn recommend_free_agent_lineup(
     minimum_gain: f64,
 ) -> Result<Option<FreeAgentRecommendation>, OptimizationError> {
     let team = find_team(snapshot, team_id)?;
-    let Some(current_projected_points) = starter_projection_total(team) else {
-        return Ok(None);
-    };
+    let (current_projected_points, projections_complete) = starter_projection_summary(team);
     if snapshot.lineup_slots.is_empty() {
         return Ok(None);
     }
@@ -238,7 +232,7 @@ pub fn recommend_free_agent_lineup(
         };
         let optimized_projected_points = assignments
             .iter()
-            .map(|assignment| assignment.projected_points)
+            .filter_map(|assignment| assignment.projected_points)
             .sum();
         let projected_gain = optimized_projected_points - current_projected_points;
         if projected_gain < minimum_gain {
@@ -253,6 +247,7 @@ pub fn recommend_free_agent_lineup(
             current_projected_points,
             optimized_projected_points,
             projected_gain,
+            projections_complete,
             action_by: recommendation_deadline(&team.players, &assignments, Some(free_agent)),
             assignments,
         };
@@ -288,13 +283,16 @@ fn find_team<'a>(
         })
 }
 
-fn starter_projection_total(team: &crate::FantasyTeam) -> Option<f64> {
+fn starter_projection_summary(team: &crate::FantasyTeam) -> (f64, bool) {
     team.players
         .iter()
         .filter(|player| player.lineup_status == LineupStatus::Starter)
-        .map(|player| player.availability.projected_points)
-        .collect::<Option<Vec<_>>>()
-        .map(|points| points.into_iter().sum())
+        .fold((0.0, true), |(points, complete), player| {
+            (
+                points + player.availability.projected_points.unwrap_or_default(),
+                complete && player.availability.projected_points.is_some(),
+            )
+        })
 }
 
 fn recommendation_deadline(
@@ -349,7 +347,11 @@ fn best_assignments(
 ) -> Result<Option<Vec<LineupAssignment>>, OptimizationError> {
     let mut remaining_slots = snapshot.lineup_slots.clone();
     let mut locked_assignments = Vec::new();
-    for player in players.iter().filter(|player| player.is_locked) {
+    for player in players.iter().filter(|player| {
+        player.is_locked
+            || (player.lineup_status == LineupStatus::Starter
+                && player.availability.projected_points.is_none())
+    }) {
         if player.lineup_status != LineupStatus::Starter {
             continue;
         }
@@ -361,14 +363,11 @@ fn best_assignments(
                 slot_name: player.lineup_slot.clone(),
             })?;
         remaining_slots.remove(slot_index);
-        let Some(projected_points) = player.availability.projected_points else {
-            return Ok(None);
-        };
         locked_assignments.push(LineupAssignment {
             slot_name: player.lineup_slot.clone(),
             player_id: player.provider_player_id.clone(),
             player_name: player.full_name.clone(),
-            projected_points,
+            projected_points: player.availability.projected_points,
         });
     }
 
@@ -397,7 +396,7 @@ fn best_assignments(
                 slot_name: remaining_slots[index].name.clone(),
                 player_id: player.provider_player_id.clone(),
                 player_name: player.full_name.clone(),
-                projected_points: player.availability.projected_points.unwrap_or_default(),
+                projected_points: player.availability.projected_points,
             }
         },
     ));
@@ -644,5 +643,31 @@ mod tests {
             recommendation.action_by,
             Some(Utc.with_ymd_and_hms(2026, 9, 27, 17, 0, 0).unwrap())
         );
+    }
+
+    #[test]
+    fn compares_known_projections_when_an_unchanged_starter_is_unavailable() {
+        let mut unavailable_projection =
+            player("unknown", "WR", "FLEX", LineupStatus::Starter, 0.0);
+        unavailable_projection.availability.projected_points = None;
+        let recommendation = recommend_optimal_lineup(
+            &snapshot(vec![
+                player("rb-low", "RB", "RB", LineupStatus::Starter, 8.0),
+                unavailable_projection,
+                player("rb-high", "RB", "BENCH", LineupStatus::Bench, 16.0),
+            ]),
+            "team",
+            DEFAULT_MINIMUM_PROJECTED_GAIN,
+        )
+        .expect("valid roster")
+        .expect("better lineup from known projections");
+
+        assert_eq!(recommendation.projected_gain, 8.0);
+        assert!(!recommendation.projections_complete);
+        assert!(recommendation
+            .assignments
+            .iter()
+            .any(|assignment| assignment.player_id == "unknown"
+                && assignment.projected_points.is_none()));
     }
 }

@@ -141,6 +141,8 @@ impl From<&MonitorAlert> for AlertFingerprint {
                 team_id: recommendation.team_id.clone(),
                 current_projected_points: recommendation.current_projected_points.to_bits(),
                 optimized_projected_points: recommendation.optimized_projected_points.to_bits(),
+                projections_complete: recommendation.projections_complete,
+                action_by: recommendation.action_by.map(|time| time.timestamp()),
                 assignments: recommendation
                     .assignments
                     .iter()
@@ -155,6 +157,8 @@ impl From<&MonitorAlert> for AlertFingerprint {
                     team_id: lineup.team_id.clone(),
                     current_projected_points: lineup.current_projected_points.to_bits(),
                     optimized_projected_points: lineup.optimized_projected_points.to_bits(),
+                    projections_complete: lineup.projections_complete,
+                    action_by: lineup.action_by.map(|time| time.timestamp()),
                     add_player_id: recommendation.add_player_id.clone(),
                     drop_player_id: recommendation.drop_player_id.clone(),
                     assignments: lineup
@@ -186,6 +190,10 @@ enum AlertFingerprint {
         team_id: String,
         current_projected_points: u64,
         optimized_projected_points: u64,
+        #[serde(default)]
+        projections_complete: bool,
+        #[serde(default)]
+        action_by: Option<i64>,
         assignments: Vec<(String, String)>,
     },
     RecommendedFreeAgentLineup {
@@ -194,6 +202,10 @@ enum AlertFingerprint {
         team_id: String,
         current_projected_points: u64,
         optimized_projected_points: u64,
+        #[serde(default)]
+        projections_complete: bool,
+        #[serde(default)]
+        action_by: Option<i64>,
         add_player_id: String,
         drop_player_id: String,
         assignments: Vec<(String, String)>,
@@ -208,6 +220,8 @@ struct MonitorHealthData {
 
 #[cfg(test)]
 mod tests {
+    use chrono::{DateTime, Utc};
+
     use super::*;
     use crate::{LineupAlert, LineupAssignment, LineupRecommendation};
 
@@ -235,12 +249,13 @@ mod tests {
             current_projected_points: 100.0,
             optimized_projected_points: 100.0 + projected_gain,
             projected_gain,
+            projections_complete: true,
             action_by: None,
             assignments: vec![LineupAssignment {
                 slot_name: "WR".to_owned(),
                 player_id: "player".to_owned(),
                 player_name: "Player".to_owned(),
-                projected_points: 15.0,
+                projected_points: Some(15.0),
             }],
         })
     }
@@ -259,6 +274,27 @@ mod tests {
 
         let changed = alert(vec![AlertReason::ConfirmedUnavailable]);
         assert_eq!(state.new_alerts(&[changed]).len(), 1);
+    }
+
+    #[test]
+    fn returns_a_recommendation_again_when_its_deadline_becomes_known() {
+        let current = recommendation(5.0);
+        let state = AlertState {
+            path: PathBuf::new(),
+            active: HashSet::from([AlertFingerprint::from(&current)]),
+        };
+
+        let mut updated = current.clone();
+        let MonitorAlert::RecommendedLineup(updated_lineup) = &mut updated else {
+            panic!("expected a lineup recommendation");
+        };
+        updated_lineup.action_by = Some(
+            DateTime::parse_from_rfc3339("2026-09-27T20:25:00Z")
+                .expect("valid deadline")
+                .with_timezone(&Utc),
+        );
+
+        assert_eq!(state.new_alerts(&[updated]).len(), 1);
     }
 
     #[test]

@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, NaiveDateTime, Utc};
 use reqwest::Client;
 
 use crate::SourceError;
@@ -42,6 +42,9 @@ impl NflGameStatusSource {
         let payload = self
             .http
             .get(NFL_SCOREBOARD_URL)
+            // ESPN's core scoreboard returns the full game week for a date,
+            // while an undated request can contain only games playing today.
+            .query(&[("dates", Utc::now().format("%Y%m%d").to_string())])
             .send()
             .await?
             .error_for_status()?
@@ -57,10 +60,7 @@ fn team_statuses_from_payload(payload: &serde_json::Value) -> HashMap<String, Nf
         .into_iter()
         .flatten()
         .filter_map(|event| {
-            let game_start_time = event["date"]
-                .as_str()
-                .and_then(|date| DateTime::parse_from_rfc3339(date).ok())
-                .map(|date| date.with_timezone(&Utc))?;
+            let game_start_time = event["date"].as_str().and_then(parse_game_start_time)?;
             let is_locked = matches!(
                 event["status"]["type"]["state"].as_str(),
                 Some("in") | Some("post")
@@ -93,6 +93,15 @@ fn team_statuses_from_payload(payload: &serde_json::Value) -> HashMap<String, Nf
         .collect()
 }
 
+fn parse_game_start_time(value: &str) -> Option<DateTime<Utc>> {
+    DateTime::parse_from_rfc3339(value)
+        .map(|date| date.with_timezone(&Utc))
+        .or_else(|_| {
+            NaiveDateTime::parse_from_str(value, "%Y-%m-%dT%H:%MZ").map(|date| date.and_utc())
+        })
+        .ok()
+}
+
 #[cfg(test)]
 mod tests {
     use chrono::{TimeZone, Utc};
@@ -106,7 +115,7 @@ mod tests {
                 "sbData": {
                     "events": [
                         {
-                            "date": "2026-09-27T17:00:00Z",
+                            "date": "2026-09-27T17:00Z",
                             "status": {"type": {"state": "pre"}},
                             "competitions": [{"competitors": [
                                 {"team": {"abbreviation": "BUF"}},

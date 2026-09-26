@@ -124,9 +124,10 @@ pub fn format_alert_email(alerts: &[MonitorAlert]) -> String {
             MonitorAlert::Starter(alert) => format_starter_alert(&mut body, alert),
             MonitorAlert::RecommendedLineup(recommendation) => {
                 body.push_str(&format!(
-                    "\n- {} / {}: a valid unlocked lineup projects {:.1} points higher ({:.1} to {:.1}).\n",
+                    "\n- {} / {}: a valid unlocked lineup improves {} by {:.1} points ({:.1} to {:.1}).\n",
                     recommendation.league_name,
                     recommendation.team_name,
+                    projection_label(recommendation.projections_complete),
                     recommendation.projected_gain,
                     recommendation.current_projected_points,
                     recommendation.optimized_projected_points,
@@ -134,20 +135,23 @@ pub fn format_alert_email(alerts: &[MonitorAlert]) -> String {
                 append_deadline(&mut body, recommendation.action_by);
                 for assignment in &recommendation.assignments {
                     body.push_str(&format!(
-                        "  {}: {} ({:.1})\n",
-                        assignment.slot_name, assignment.player_name, assignment.projected_points
+                        "  {}: {} ({})\n",
+                        assignment.slot_name,
+                        assignment.player_name,
+                        format_projection(assignment.projected_points)
                     ));
                 }
             }
             MonitorAlert::RecommendedFreeAgentLineup(recommendation) => {
                 let lineup = &recommendation.lineup;
                 body.push_str(&format!(
-                    "\n- {} / {}: add {} ({:.1}) and drop {} for a valid unlocked lineup projecting {:.1} points higher ({:.1} to {:.1}).\n",
+                    "\n- {} / {}: add {} ({:.1}) and drop {} for a valid unlocked lineup that improves {} by {:.1} points ({:.1} to {:.1}).\n",
                     lineup.league_name,
                     lineup.team_name,
                     recommendation.add_player_name,
                     recommendation.add_projected_points,
                     recommendation.drop_player_name,
+                    projection_label(lineup.projections_complete),
                     lineup.projected_gain,
                     lineup.current_projected_points,
                     lineup.optimized_projected_points,
@@ -155,8 +159,10 @@ pub fn format_alert_email(alerts: &[MonitorAlert]) -> String {
                 append_deadline(&mut body, lineup.action_by);
                 for assignment in &lineup.assignments {
                     body.push_str(&format!(
-                        "  {}: {} ({:.1})\n",
-                        assignment.slot_name, assignment.player_name, assignment.projected_points
+                        "  {}: {} ({})\n",
+                        assignment.slot_name,
+                        assignment.player_name,
+                        format_projection(assignment.projected_points)
                     ));
                 }
             }
@@ -174,6 +180,20 @@ fn append_deadline(body: &mut String, deadline: Option<DateTime<Utc>>) {
                 .format("%a, %b %-d at %-I:%M %p %Z")
         ));
     }
+}
+
+fn projection_label(projections_complete: bool) -> &'static str {
+    if projections_complete {
+        "projected points"
+    } else {
+        "known projected points"
+    }
+}
+
+fn format_projection(projection: Option<f64>) -> String {
+    projection
+        .map(|points| format!("{points:.1}"))
+        .unwrap_or_else(|| "projection unavailable".to_owned())
 }
 
 fn format_starter_alert(body: &mut String, alert: &LineupAlert) {
@@ -294,12 +314,13 @@ mod tests {
                     current_projected_points: 90.0,
                     optimized_projected_points: 96.0,
                     projected_gain: 6.0,
+                    projections_complete: true,
                     action_by: Some(Utc.with_ymd_and_hms(2026, 9, 27, 17, 0, 0).unwrap()),
                     assignments: vec![LineupAssignment {
                         slot_name: "WR".to_owned(),
                         player_id: "3".to_owned(),
                         player_name: "New Player".to_owned(),
-                        projected_points: 14.0,
+                        projected_points: Some(14.0),
                     }],
                 },
                 add_player_id: "3".to_owned(),
