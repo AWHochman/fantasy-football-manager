@@ -1,8 +1,7 @@
 # Fantasy Football Manager
 
-A read-only monitor for ESPN and Sleeper fantasy football teams. It is being
-built to identify starters who have a bye, are inactive/injured, or project for
-zero points, then alert the team owner. It deliberately contains no capability
+A read-only monitor for ESPN and Sleeper fantasy football teams. It identifies
+actionable starters, sends email alerts, and deliberately contains no capability
 for trades, waivers, adds, drops, or lineup changes.
 
 ## Provider clients
@@ -42,7 +41,8 @@ roster, and user data are always fetched live. On macOS the default cache is
 If ESPN rejects an expired or invalid session, the monitor sends one email
 asking you to refresh `ESPN_S2` in `.env`, then sends one recovery email after
 a successful ESPN read. ESPN does not provide a reliable advance-expiry signal,
-so the warning occurs when its next request is rejected.
+so the warning occurs when its next request is rejected. Updating `.env` is
+enough; the next scheduled run reads the new value.
 
 ## Live read test
 
@@ -72,6 +72,13 @@ cargo run --bin fetch_leagues
 It requests only the configured sources and prints normalized roster JSON. An
 ESPN authorization failure usually means `ESPN_S2` needs to be refreshed.
 
+`ESPN_SCORING_PERIOD` and `ESPN_PLAYER_IDS` in `.env.example` are only for the
+optional ESPN player-card debugging command:
+
+```sh
+cargo run --bin fetch_espn_players
+```
+
 ## Managed Teams
 
 Configure every team you want monitored through `MANAGED_TEAMS_JSON` in your
@@ -86,6 +93,17 @@ the league response. Multiple ESPN entries share the same `ESPN_SWID` and
 `ESPN_S2` session values.
 
 Run the current read-and-evaluate pipeline with `cargo run --bin monitor`.
+
+## Monitoring Behavior
+
+The monitor evaluates only active starters. It sends an alert for a confirmed
+unavailable status or a zero projection. Bye-week players are covered through
+their zero projection. A missing projection is not treated as zero, avoiding
+an alert before a source has published projections.
+
+The monitor keeps local state so an unchanged issue sends one email, not an
+email every 30 minutes. A changed issue sends an updated email; a resolved
+issue is removed from state and can alert again if it returns.
 
 ## Email Alerts
 
@@ -108,6 +126,10 @@ sends no email when it finds no alerts.
 Repeated runs email only newly detected or changed alerts. Active alerts are
 stored locally in `~/Library/Caches/fantasy-football-manager/active_alerts.json`
 on macOS; deleting that file resets the alert history.
+
+ESPN session-health state is stored beside it in `monitor_health.json`.
+Deleting that file resets only the one-time expired-session and recovery-email
+history.
 
 To verify delivery without waiting for a roster alert, run:
 
@@ -138,4 +160,12 @@ To remove the automatic job without deleting logs or alert history:
 
 ```sh
 bash scripts/uninstall_launch_daemon.sh
+```
+
+After installation, inspect the current service and recent logs with:
+
+```sh
+sudo launchctl print system/com.austinhochman.fantasy-football-manager
+tail -n 50 ~/Library/Logs/fantasy-football-manager/monitor.log
+tail -n 50 ~/Library/Logs/fantasy-football-manager/monitor.error.log
 ```
