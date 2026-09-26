@@ -76,3 +76,21 @@ the league response. Multiple ESPN entries share the same `ESPN_SWID` and
 `ESPN_S2` session values.
 
 Run the current read-and-evaluate pipeline with `cargo run --bin monitor`.
+
+## Email Alerts
+
+When the monitor finds one or more actionable starters, it sends one email
+through an SMTP relay. Add these local settings to `.env`:
+
+```dotenv
+EMAIL_SMTP_HOST=smtp.example.com
+EMAIL_SMTP_PORT=465
+EMAIL_SMTP_SECURITY=implicit
+EMAIL_SMTP_USERNAME=your-smtp-username
+EMAIL_SMTP_PASSWORD=your-smtp-password-or-app-password
+EMAIL_FROM=Fantasy Monitor <alerts@example.com>
+EMAIL_TO=you@example.com
+```
+
+Use `implicit` TLS for port `465`, or `starttls` for port `587`. The monitor
+sends no email when it finds no alerts.
