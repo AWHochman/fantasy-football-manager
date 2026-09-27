@@ -15,6 +15,15 @@ pub struct LineupAssignment {
     pub projected_points: Option<f64>,
 }
 
+/// One change needed to reach a recommended lineup from the current roster.
+#[derive(Clone, Debug, PartialEq)]
+pub struct LineupChange {
+    pub player_id: String,
+    pub player_name: String,
+    pub from_slot: String,
+    pub to_slot: String,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct LineupRecommendation {
     pub provider: Provider,
@@ -30,6 +39,7 @@ pub struct LineupRecommendation {
     pub projections_complete: bool,
     /// The earliest kickoff among players whose lineup status changes.
     pub action_by: Option<DateTime<Utc>>,
+    pub changes: Vec<LineupChange>,
     pub assignments: Vec<LineupAssignment>,
 }
 
@@ -173,6 +183,7 @@ pub fn recommend_optimal_lineup(
         projected_gain,
         projections_complete,
         action_by: recommendation_deadline(&team.players, &assignments, None),
+        changes: lineup_changes(&team.players, &assignments),
         assignments,
     }))
 }
@@ -249,6 +260,7 @@ pub fn recommend_free_agent_lineup(
             projected_gain,
             projections_complete,
             action_by: recommendation_deadline(&team.players, &assignments, Some(free_agent)),
+            changes: lineup_changes(&team.players, &assignments),
             assignments,
         };
         let recommendation = FreeAgentRecommendation {
@@ -293,6 +305,56 @@ fn starter_projection_summary(team: &crate::FantasyTeam) -> (f64, bool) {
                 complete && player.availability.projected_points.is_some(),
             )
         })
+}
+
+fn lineup_changes(
+    players: &[RosteredPlayer],
+    assignments: &[LineupAssignment],
+) -> Vec<LineupChange> {
+    let current_slots: HashMap<_, _> = players
+        .iter()
+        .filter(|player| player.lineup_status == LineupStatus::Starter)
+        .map(|player| {
+            (
+                player.provider_player_id.as_str(),
+                player.lineup_slot.as_str(),
+            )
+        })
+        .collect();
+    let assigned_ids: HashSet<_> = assignments
+        .iter()
+        .map(|assignment| assignment.player_id.as_str())
+        .collect();
+    let mut changes: Vec<_> = assignments
+        .iter()
+        .filter_map(|assignment| {
+            let from_slot = current_slots
+                .get(assignment.player_id.as_str())
+                .copied()
+                .unwrap_or("BENCH");
+            (from_slot != assignment.slot_name).then(|| LineupChange {
+                player_id: assignment.player_id.clone(),
+                player_name: assignment.player_name.clone(),
+                from_slot: from_slot.to_owned(),
+                to_slot: assignment.slot_name.clone(),
+            })
+        })
+        .collect();
+    changes.extend(
+        players
+            .iter()
+            .filter(|player| {
+                player.lineup_status == LineupStatus::Starter
+                    && !assigned_ids.contains(player.provider_player_id.as_str())
+            })
+            .map(|player| LineupChange {
+                player_id: player.provider_player_id.clone(),
+                player_name: player.full_name.clone(),
+                from_slot: player.lineup_slot.clone(),
+                to_slot: "BENCH".to_owned(),
+            }),
+    );
+    changes
 }
 
 fn recommendation_deadline(
@@ -498,6 +560,7 @@ mod tests {
             league_id: "league".to_owned(),
             league_name: "League".to_owned(),
             scoring_period: None,
+            scoring_settings: HashMap::new(),
             lineup_slots: vec![
                 LineupSlot {
                     name: "RB".to_owned(),
@@ -553,6 +616,13 @@ mod tests {
             .assignments
             .iter()
             .any(|assignment| assignment.player_id == "rb-high"));
+        assert!(recommendation
+            .changes
+            .iter()
+            .any(|change| { change.player_id == "rb-high" && change.from_slot == "BENCH" }));
+        assert!(recommendation.changes.iter().any(|change| {
+            change.player_id == "wr-low" && change.from_slot == "FLEX" && change.to_slot == "BENCH"
+        }));
     }
 
     #[test]

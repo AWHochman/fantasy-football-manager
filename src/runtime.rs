@@ -5,7 +5,7 @@ use thiserror::Error;
 use crate::{
     merge_available_player_enrichment, merge_player_enrichment, AppConfig, AvailablePlayer,
     ConfigError, EspnSource, FantasySource, LeagueSnapshot, ManagedTeam, NflGameStatusSource,
-    PlayerEnrichment, Provider, SleeperSource, SourceError,
+    Provider, SleeperSource, SourceError,
 };
 
 const FREE_AGENTS_PER_POSITION: usize = 8;
@@ -56,11 +56,20 @@ pub async fn fetch_managed_snapshots(
             Provider::Sleeper => {
                 let source = SleeperSource::new(&team.league_id);
                 let snapshot = source.fetch_league().await?;
-                let available_players = match source.fetch_available_players().await {
-                    Ok(players) => (players, true),
-                    Err(_) => (Vec::new(), false),
-                };
-                (snapshot, available_players.0, available_players.1)
+                let (available_players, free_agents_known) =
+                    match source.fetch_available_players().await {
+                        Ok(players) => (players, true),
+                        Err(_) => (Vec::new(), false),
+                    };
+                let enrichment_by_player_id = source
+                    .fetch_player_enrichment(&snapshot.scoring_settings)
+                    .await?;
+                let snapshot = merge_player_enrichment(&snapshot, &enrichment_by_player_id);
+                let available_players = limit_available_players(merge_available_player_enrichment(
+                    &available_players,
+                    &enrichment_by_player_id,
+                ));
+                (snapshot, available_players, free_agents_known)
             }
             Provider::Espn => {
                 let session = espn.as_ref().expect("ESPN configuration was validated");
@@ -71,7 +80,7 @@ pub async fn fetch_managed_snapshots(
                     &session.espn_s2,
                 );
                 let snapshot = source.fetch_league().await?;
-                let available_players = match snapshot.scoring_period {
+                let (available_players, free_agents_known) = match snapshot.scoring_period {
                     Some(scoring_period) => {
                         match source.fetch_available_players(scoring_period).await {
                             Ok(players) => (players, true),
@@ -85,7 +94,14 @@ pub async fn fetch_managed_snapshots(
                     }
                     None => (Vec::new(), false),
                 };
-                (snapshot, available_players.0, available_players.1)
+                let enrichment_by_player_id =
+                    fetch_espn_enrichment(&source, &snapshot, &available_players).await?;
+                let snapshot = merge_player_enrichment(&snapshot, &enrichment_by_player_id);
+                let available_players = limit_available_players(merge_available_player_enrichment(
+                    &available_players,
+                    &enrichment_by_player_id,
+                ));
+                (snapshot, available_players, free_agents_known)
             }
         };
         snapshots.push(ManagedSnapshot {
@@ -97,89 +113,43 @@ pub async fn fetch_managed_snapshots(
         });
     }
 
-    let snapshots = enrich_snapshots(snapshots, espn.as_ref()).await?;
     Ok(apply_game_locks(snapshots).await)
 }
 
-async fn enrich_snapshots(
-    snapshots: Vec<ManagedSnapshot>,
-    espn: Option<&EspnSession>,
-) -> Result<Vec<ManagedSnapshot>, RuntimeError> {
-    let Some(session) = espn else {
-        return Ok(snapshots);
-    };
-    let Some(reference_league) = snapshots
-        .iter()
-        .find(|managed| managed.team.provider == Provider::Espn)
-    else {
-        return Ok(snapshots);
-    };
-    let scoring_period = reference_league
-        .snapshot
+async fn fetch_espn_enrichment(
+    source: &EspnSource,
+    snapshot: &LeagueSnapshot,
+    available_players: &[AvailablePlayer],
+) -> Result<HashMap<String, crate::PlayerEnrichment>, RuntimeError> {
+    let scoring_period = snapshot
         .scoring_period
         .ok_or(RuntimeError::MissingEspnScoringPeriod)?;
-
     let mut ids = HashSet::new();
-    let mut sleeper_to_espn = HashMap::new();
-    for managed in &snapshots {
-        for team in &managed.snapshot.teams {
-            for player in &team.players {
-                let espn_id = player.espn_player_id.as_ref();
-                if let Some(espn_id) = espn_id {
-                    if let Ok(id) = espn_id.parse::<i64>() {
-                        if id > 0 {
-                            ids.insert(id);
-                        }
-                    }
-                    if managed.team.provider == Provider::Sleeper {
-                        sleeper_to_espn.insert(player.provider_player_id.clone(), espn_id.clone());
-                    }
+    for team in &snapshot.teams {
+        for player in &team.players {
+            if let Ok(id) = player.provider_player_id.parse::<i64>() {
+                if id > 0 {
+                    ids.insert(id);
                 }
             }
         }
-        for player in &managed.available_players {
-            if let Some(espn_id) = &player.espn_player_id {
-                if let Ok(id) = espn_id.parse::<i64>() {
-                    if id > 0 {
-                        ids.insert(id);
-                    }
-                }
+    }
+    for player in available_players {
+        if let Ok(id) = player.provider_player_id.parse::<i64>() {
+            if id > 0 {
+                ids.insert(id);
             }
         }
     }
     if ids.is_empty() {
-        return Ok(snapshots);
+        return Ok(HashMap::new());
     }
 
-    let source = EspnSource::new(
-        reference_league.team.league_id.parse::<u64>()?,
-        session.season,
-        &session.swid,
-        &session.espn_s2,
-    );
-    let enrichment_by_espn_id: HashMap<String, PlayerEnrichment> = source
+    Ok(source
         .fetch_player_enrichment(&ids.into_iter().collect::<Vec<_>>(), scoring_period)
         .await?
         .into_iter()
         .map(|enrichment| (enrichment.provider_player_id.clone(), enrichment))
-        .collect();
-
-    Ok(snapshots
-        .into_iter()
-        .map(|managed| ManagedSnapshot {
-            snapshot: merge_player_enrichment(
-                &managed.snapshot,
-                &enrichment_by_espn_id,
-                &sleeper_to_espn,
-            ),
-            available_players: limit_available_players(merge_available_player_enrichment(
-                &managed.available_players,
-                &enrichment_by_espn_id,
-            )),
-            team: managed.team,
-            locks_known: managed.locks_known,
-            free_agents_known: managed.free_agents_known,
-        })
         .collect())
 }
 

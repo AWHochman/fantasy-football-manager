@@ -223,7 +223,7 @@ mod tests {
     use chrono::{DateTime, Utc};
 
     use super::*;
-    use crate::{LineupAlert, LineupAssignment, LineupRecommendation};
+    use crate::{LineupAlert, LineupAssignment, LineupChange, LineupRecommendation};
 
     fn alert(reasons: Vec<AlertReason>) -> MonitorAlert {
         MonitorAlert::Starter(LineupAlert {
@@ -251,6 +251,12 @@ mod tests {
             projected_gain,
             projections_complete: true,
             action_by: None,
+            changes: vec![LineupChange {
+                player_id: "player".to_owned(),
+                player_name: "Player".to_owned(),
+                from_slot: "BENCH".to_owned(),
+                to_slot: "WR".to_owned(),
+            }],
             assignments: vec![LineupAssignment {
                 slot_name: "WR".to_owned(),
                 player_id: "player".to_owned(),

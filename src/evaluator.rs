@@ -142,6 +142,7 @@ mod tests {
             league_id: "league-1".to_owned(),
             league_name: "Test league".to_owned(),
             scoring_period: None,
+            scoring_settings: std::collections::HashMap::new(),
             lineup_slots: Vec::new(),
             teams: vec![FantasyTeam {
                 team_id: "team-1".to_owned(),

@@ -38,6 +38,11 @@ roster, and user data are always fetched live. On macOS the default cache is
 `~/Library/Caches/fantasy-football-manager/sleeper_players.json`. Set
 `FANTASY_FOOTBALL_CACHE_DIR` in `.env` to use a different cache directory.
 
+Weekly projections stay provider-native: Sleeper leagues use Sleeper's weekly
+projected stat lines, scored using that league's `scoring_settings`; ESPN
+leagues use ESPN's weekly projected totals. This avoids relying on incomplete
+cross-provider player-ID mappings.
+
 If ESPN rejects an expired or invalid session, the monitor sends one email
 asking you to refresh `ESPN_S2` in `.env`, then sends one recovery email after
 a successful ESPN read. ESPN does not provide a reliable advance-expiry signal,

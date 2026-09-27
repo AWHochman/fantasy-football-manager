@@ -8,7 +8,7 @@ use lettre::{
 };
 use thiserror::Error;
 
-use crate::{AlertReason, LineupAlert, MonitorAlert};
+use crate::{AlertReason, LineupAlert, LineupChange, MonitorAlert};
 
 #[derive(Debug, Error)]
 pub enum NotifierError {
@@ -124,47 +124,23 @@ pub fn format_alert_email(alerts: &[MonitorAlert]) -> String {
             MonitorAlert::Starter(alert) => format_starter_alert(&mut body, alert),
             MonitorAlert::RecommendedLineup(recommendation) => {
                 body.push_str(&format!(
-                    "\n- {} / {}: a valid unlocked lineup improves {} by {:.1} points ({:.1} to {:.1}).\n",
-                    recommendation.league_name,
-                    recommendation.team_name,
-                    projection_label(recommendation.projections_complete),
-                    recommendation.projected_gain,
-                    recommendation.current_projected_points,
-                    recommendation.optimized_projected_points,
+                    "\n- {} / {}: update this lineup.\n",
+                    recommendation.league_name, recommendation.team_name,
                 ));
                 append_deadline(&mut body, recommendation.action_by);
-                for assignment in &recommendation.assignments {
-                    body.push_str(&format!(
-                        "  {}: {} ({})\n",
-                        assignment.slot_name,
-                        assignment.player_name,
-                        format_projection(assignment.projected_points)
-                    ));
-                }
+                append_lineup_changes(&mut body, &recommendation.changes);
             }
             MonitorAlert::RecommendedFreeAgentLineup(recommendation) => {
                 let lineup = &recommendation.lineup;
                 body.push_str(&format!(
-                    "\n- {} / {}: add {} ({:.1}) and drop {} for a valid unlocked lineup that improves {} by {:.1} points ({:.1} to {:.1}).\n",
+                    "\n- {} / {}: update this lineup.\n  Add {} and drop {}.\n",
                     lineup.league_name,
                     lineup.team_name,
                     recommendation.add_player_name,
-                    recommendation.add_projected_points,
                     recommendation.drop_player_name,
-                    projection_label(lineup.projections_complete),
-                    lineup.projected_gain,
-                    lineup.current_projected_points,
-                    lineup.optimized_projected_points,
                 ));
                 append_deadline(&mut body, lineup.action_by);
-                for assignment in &lineup.assignments {
-                    body.push_str(&format!(
-                        "  {}: {} ({})\n",
-                        assignment.slot_name,
-                        assignment.player_name,
-                        format_projection(assignment.projected_points)
-                    ));
-                }
+                append_lineup_changes(&mut body, &lineup.changes);
             }
         }
     }
@@ -182,18 +158,26 @@ fn append_deadline(body: &mut String, deadline: Option<DateTime<Utc>>) {
     }
 }
 
-fn projection_label(projections_complete: bool) -> &'static str {
-    if projections_complete {
-        "projected points"
-    } else {
-        "known projected points"
+fn append_lineup_changes(body: &mut String, changes: &[LineupChange]) {
+    for change in changes {
+        match (change.from_slot.as_str(), change.to_slot.as_str()) {
+            ("BENCH" | "RESERVE", to_slot) => {
+                body.push_str(&format!("  Start {} at {to_slot}.\n", change.player_name));
+            }
+            (from_slot, "BENCH") => {
+                body.push_str(&format!(
+                    "  Bench {} from {from_slot}.\n",
+                    change.player_name
+                ));
+            }
+            (from_slot, to_slot) => {
+                body.push_str(&format!(
+                    "  Move {} from {from_slot} to {to_slot}.\n",
+                    change.player_name
+                ));
+            }
+        }
     }
-}
-
-fn format_projection(projection: Option<f64>) -> String {
-    projection
-        .map(|points| format!("{points:.1}"))
-        .unwrap_or_else(|| "projection unavailable".to_owned())
 }
 
 fn format_starter_alert(body: &mut String, alert: &LineupAlert) {
@@ -273,8 +257,8 @@ fn alert_reason_name(reason: &AlertReason) -> &'static str {
 #[cfg(test)]
 mod tests {
     use crate::{
-        FreeAgentRecommendation, LineupAlert, LineupAssignment, LineupRecommendation, MonitorAlert,
-        Provider,
+        FreeAgentRecommendation, LineupAlert, LineupAssignment, LineupChange, LineupRecommendation,
+        MonitorAlert, Provider,
     };
     use chrono::{TimeZone, Utc};
 
@@ -316,6 +300,12 @@ mod tests {
                     projected_gain: 6.0,
                     projections_complete: true,
                     action_by: Some(Utc.with_ymd_and_hms(2026, 9, 27, 17, 0, 0).unwrap()),
+                    changes: vec![LineupChange {
+                        player_id: "3".to_owned(),
+                        player_name: "New Player".to_owned(),
+                        from_slot: "BENCH".to_owned(),
+                        to_slot: "WR".to_owned(),
+                    }],
                     assignments: vec![LineupAssignment {
                         slot_name: "WR".to_owned(),
                         player_id: "3".to_owned(),
@@ -331,8 +321,8 @@ mod tests {
             },
         )]);
 
-        assert!(body.contains("add New Player (14.0) and drop Old Player"));
+        assert!(body.contains("Add New Player and drop Old Player"));
         assert!(body.contains("Act by:"));
-        assert!(body.contains("WR: New Player (14.0)"));
+        assert!(body.contains("Start New Player at WR."));
     }
 }

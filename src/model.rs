@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
@@ -14,6 +16,9 @@ pub struct LeagueSnapshot {
     pub league_name: String,
     #[serde(default)]
     pub scoring_period: Option<u8>,
+    /// Provider-native scoring rules used to derive weekly projections.
+    #[serde(default)]
+    pub scoring_settings: HashMap<String, f64>,
     #[serde(default)]
     pub lineup_slots: Vec<LineupSlot>,
     pub teams: Vec<FantasyTeam>,

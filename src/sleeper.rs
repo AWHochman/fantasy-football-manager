@@ -11,7 +11,7 @@ use serde::{Deserialize, Deserializer};
 
 use crate::{
     AvailablePlayer, FantasySource, FantasyTeam, LeagueSnapshot, LineupSlot, LineupStatus,
-    PlayerAvailability, Provider, RosteredPlayer, SourceError,
+    PlayerAvailability, PlayerEnrichment, Provider, RosteredPlayer, SourceError,
 };
 
 const SLEEPER_API_BASE: &str = "https://api.sleeper.app/v1";
@@ -60,8 +60,51 @@ impl SleeperSource {
         Ok(players)
     }
 
+    /// Fetches the current week's native Sleeper projection stat lines and
+    /// applies this league's scoring rules to them.
+    pub async fn fetch_player_enrichment(
+        &self,
+        scoring_settings: &HashMap<String, f64>,
+    ) -> Result<HashMap<String, PlayerEnrichment>, SourceError> {
+        let state_url = format!("{SLEEPER_API_BASE}/state/nfl");
+        let state = get_json::<SleeperNflState>(&self.http, &state_url).await?;
+        let positions = ["QB", "RB", "WR", "TE", "K", "DEF"];
+        let mut projections = HashMap::new();
+
+        for position in positions {
+            let url = format!(
+                "{SLEEPER_API_BASE}/projections/nfl/{}/{}/{}?position%5B%5D={position}",
+                state.season_type, state.season, state.week
+            );
+            projections.extend(
+                get_json::<HashMap<String, HashMap<String, serde_json::Value>>>(&self.http, &url)
+                    .await?,
+            );
+        }
+
+        Ok(projections
+            .into_iter()
+            .filter_map(|(player_id, stats)| {
+                projected_points(&stats, scoring_settings).map(|projected_points| {
+                    (
+                        player_id.clone(),
+                        PlayerEnrichment {
+                            provider_player_id: player_id.clone(),
+                            full_name: player_id,
+                            position: None,
+                            nfl_team: None,
+                            injury_status: None,
+                            is_on_bye: None,
+                            projected_points: Some(projected_points),
+                        },
+                    )
+                })
+            })
+            .collect())
+    }
+
     /// Returns active, unrostered players from this Sleeper league. Weekly
-    /// projections are deliberately enriched later through the shared path.
+    /// projections are enriched later using native Sleeper player IDs.
     pub async fn fetch_available_players(&self) -> Result<Vec<AvailablePlayer>, SourceError> {
         let rosters_url = format!("{SLEEPER_API_BASE}/league/{}/rosters", self.league_id);
         let rosters = get_json::<Vec<SleeperRoster>>(&self.http, &rosters_url).await?;
@@ -78,7 +121,6 @@ impl SleeperSource {
             let mut position_players: Vec<_> = position_players
                 .drain()
                 .filter(|(id, _)| !rostered_ids.contains(id))
-                .filter(|(_, player)| player.espn_id.is_some())
                 .collect();
             position_players.sort_by_key(|(_, player)| player.search_rank.unwrap_or(i64::MAX));
             for (id, player) in position_players.into_iter().take(FREE_AGENTS_PER_POSITION) {
@@ -301,6 +343,7 @@ fn normalize(
             .name
             .unwrap_or_else(|| format!("Sleeper league {league_id}")),
         scoring_period: None,
+        scoring_settings: league.scoring_settings,
         lineup_slots,
         teams,
     }
@@ -339,8 +382,17 @@ fn lineup_slot_definition(position: &str) -> Option<LineupSlot> {
 #[derive(Deserialize)]
 struct SleeperLeague {
     name: Option<String>,
+    #[serde(default)]
+    scoring_settings: HashMap<String, f64>,
     #[serde(default, deserialize_with = "null_to_default")]
     roster_positions: Vec<String>,
+}
+
+#[derive(Deserialize)]
+struct SleeperNflState {
+    season: String,
+    week: u8,
+    season_type: String,
 }
 
 #[derive(Deserialize)]
@@ -398,11 +450,10 @@ impl SleeperPlayer {
 }
 
 fn split_positions(position: &str) -> Vec<String> {
-    position
-        .replace("DEF", "D/ST")
-        .split('/')
-        .map(str::to_owned)
-        .collect()
+    match position {
+        "DEF" | "D/ST" => vec!["D/ST".to_owned()],
+        _ => position.split('/').map(str::to_owned).collect(),
+    }
 }
 
 fn null_to_default<'de, D, T>(deserializer: D) -> Result<T, D::Error>
@@ -425,6 +476,22 @@ where
     }))
 }
 
+fn projected_points(
+    stats: &HashMap<String, serde_json::Value>,
+    scoring_settings: &HashMap<String, f64>,
+) -> Option<f64> {
+    let mut points = 0.0;
+    let mut has_scored_stat = false;
+    for (stat, multiplier) in scoring_settings {
+        let Some(value) = stats.get(stat).and_then(serde_json::Value::as_f64) else {
+            continue;
+        };
+        points += value * multiplier;
+        has_scored_stat = true;
+    }
+    has_scored_stat.then_some(points)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -435,6 +502,7 @@ mod tests {
             "league-1",
             SleeperLeague {
                 name: Some("Sunday league".to_owned()),
+                scoring_settings: HashMap::new(),
                 roster_positions: vec!["QB".to_owned(), "FLEX".to_owned(), "BN".to_owned()],
             },
             vec![SleeperUser {
@@ -523,5 +591,32 @@ mod tests {
 
         assert!(cache_is_fresh(fresh, now));
         assert!(!cache_is_fresh(stale, now));
+    }
+
+    #[test]
+    fn calculates_projection_using_the_league_scoring_rules() {
+        let stats = HashMap::from([
+            ("pass_yd".to_owned(), serde_json::json!(250.0)),
+            ("pass_td".to_owned(), serde_json::json!(2.0)),
+            ("pts_ppr".to_owned(), serde_json::json!(99.0)),
+        ]);
+        let scoring = HashMap::from([("pass_yd".to_owned(), 0.04), ("pass_td".to_owned(), 4.0)]);
+
+        assert_eq!(projected_points(&stats, &scoring), Some(18.0));
+    }
+
+    #[test]
+    fn accepts_string_seasons_in_the_nfl_state() {
+        let state: SleeperNflState =
+            serde_json::from_str(r#"{"season":"2026","week":3,"season_type":"regular"}"#)
+                .expect("Sleeper state response");
+
+        assert_eq!(state.season, "2026");
+    }
+
+    #[test]
+    fn normalizes_defense_as_a_single_dst_position() {
+        assert_eq!(split_positions("DEF"), ["D/ST"]);
+        assert_eq!(split_positions("D/ST"), ["D/ST"]);
     }
 }

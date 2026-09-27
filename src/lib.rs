@@ -32,7 +32,8 @@ pub use nfl::NflGameStatusSource;
 pub use notifier::{format_alert_email, AlertNotifier, EmailNotifier, NotifierError};
 pub use optimizer::{
     recommend_free_agent_lineup, recommend_optimal_lineup, FreeAgentRecommendation,
-    LineupAssignment, LineupRecommendation, OptimizationError, DEFAULT_MINIMUM_PROJECTED_GAIN,
+    LineupAssignment, LineupChange, LineupRecommendation, OptimizationError,
+    DEFAULT_MINIMUM_PROJECTED_GAIN,
 };
 pub use runtime::{fetch_managed_snapshots, ManagedSnapshot, RuntimeError};
 pub use sleeper::SleeperSource;

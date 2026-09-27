@@ -290,6 +290,7 @@ fn normalize(league_id: u64, league: EspnLeague) -> LeagueSnapshot {
         league_id: league_id.to_string(),
         league_name,
         scoring_period: league.scoring_period_id,
+        scoring_settings: HashMap::new(),
         lineup_slots,
         teams,
     }
